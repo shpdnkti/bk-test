@@ -129,8 +129,8 @@ fi
 
 info "Install dependencies"
 if apt-get -v &> /dev/null; then
-    apt-get update
-    apt-get install -y -q libmysqlclient-dev rsync
+    apt-get update -qq
+    apt-get install -qq libmysqlclient-dev rsync
 elif which yum &> /dev/null; then
     yum install -y -q mysql-devel gcc gcc-devel python-devel rsync
 fi
