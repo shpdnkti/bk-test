@@ -10,7 +10,6 @@ django.pot
 *.sql
 #dev.py
 *.env
-*.sh
 
 frontend/pc/node_modules
 static/assets*

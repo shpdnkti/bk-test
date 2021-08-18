@@ -380,4 +380,4 @@ mkdir -p $FILE_OUTPUT
 rsync -av --delete $WORK_DIR/dist/${PKG_NAME} $FILE_OUTPUT
 
 # clean up
-[[ "$IS_TRACE" == "true" ]] || rm -rf ${WORK_DIR} 
+[[ "$IS_TRACE" == "true" ]] || rm -rf ${WORK_DIR}  
