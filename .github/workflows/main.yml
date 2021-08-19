@@ -34,11 +34,11 @@ jobs:
       shell: bash
       run: | 
         cd ${GITHUB_WORKSPACE}/frontend/pc
-        #npm install
+        npm install
         cd ${GITHUB_WORKSPACE}/frontend/weixin
-        #npm install
+        npm install
         cd ${GITHUB_WORKSPACE}/frontend/
-        #pm run build
+        npm run build
         cd ${GITHUB_WORKSPACE}/
         mkdir -p /tmp/release
         tar czf /tmp/release/${APP_CODE}_ui_V${VERSION}.tar.gz frontend
