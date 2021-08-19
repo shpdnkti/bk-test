@@ -1,9 +1,10 @@
 #!/bin/bash
+# shellcheck disable=SC2086,SC2046
 
 usage () {
     cat <<EOF
     
-$0 -s source -d dest -t [0|1|2] -U user-codes [-c] [-h]
+$SCRIPT_DIR/$0 -s source -d dest -t [0|1|2] -U user-codes [-c] [-h]
 
 Flags:
     -s, --source                 [必填] 源码，支持zip/tgz/源码目录
@@ -27,8 +28,9 @@ SCRIPT_DIR=$(dirname "$(readlink -f "$0")")
 LOG_FILE=/var/log/$0-$(date +%F-%s).log
 
 exec 2> >(trap '' INT; tee -a $LOG_FILE >&2)
+# shellcheck disable=SC2154
 trap '>&2 ec=$?; (( ec != 0 )) && echo "[ERROR $(date +%F/%T) $BASH_LINENO] Exited with failure: $ec"; exit $ec' EXIT
-
+# shellcheck disable=SC2128,SC2145
 ok () { echo "[OK $(date +%F/%T) $BASH_LINENO] $@" | tee -a $LOG_FILE 2>&1; return 0; }
 info () { echo "[INFO $(date +%F/%T) $BASH_LINENO] $@" | tee -a $LOG_FILE 2>&1; return $?; }
 fail () { echo "[FAIL $(date +%F/%T) $BASH_LINENO] $@" | tee -a $LOG_FILE 2>&1; return $?; }
@@ -162,21 +164,24 @@ info "Execute precheck items"
 if [ "$(find $WORK_DIR -maxdepth 2 -type f -name 'app.yml' | wc -l)" -eq 1 ]; then
     yaml_string=$(parse_yaml $(find $WORK_DIR -maxdepth 2 -type f -name 'app.yml'))
     eval "$yaml_string"
+    # shellcheck disable=SC2043
     for var in "app_name is_use_celery author introduction version"; do
         if [ "$(eval echo \$$var)" == '' ]; then
-            err 'app.yml 中缺少 $var '
+            err "app.yml 中缺少 $var "
         fi
     done
+    # shellcheck disable=SC2154
     if [ "$( echo $app_code | grep -P '^[a-z][a-z0-9-_]{1,16}$' )" == "$app_code" ]; then
         APP_CODE=$app_code
         PROJECT_HOME="$WORK_DIR/$APP_CODE"
-        PROJECT_NAME=$APP_CODE
     else
         err "请检查 app_code 命名，使其满足^[a-z][a-z0-9-_]{1,16}$"
     fi
+    # shellcheck disable=SC2154
     if [ "$RELEASE_VERSION" != '-1' ]; then
         APP_VERSION=$RELEASE_VERSION
     else
+        
         APP_VERSION=$version
     fi
 else
