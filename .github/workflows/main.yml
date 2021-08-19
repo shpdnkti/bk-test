@@ -18,6 +18,7 @@ jobs:
         fetch-depth: 1
 
     - name: Get the Version
+      id: verison
       shell: bash
       run: |
         echo "VERSION=$(echo ${GITHUB_REF} | cut -d / -f 3)" >> $GITHUB_ENV
@@ -37,7 +38,7 @@ jobs:
         cd ${GITHUB_WORKSPACE}/frontend/weixin
         #npm install
         cd ${GITHUB_WORKSPACE}/frontend/
-        #npm run build
+        #pm run build
         cd ${GITHUB_WORKSPACE}/
         mkdir -p /tmp/release
         tar czf /tmp/release/${APP_CODE}_ui_V${VERSION}.tar.gz frontend
@@ -62,5 +63,5 @@ jobs:
     - name: Upload Release Asset
       uses: softprops/action-gh-release@v1
       with:
-        tag_name: ${VERSION}
+        tag_name: ${{ steps.version.outputs.VERSION }}
         files: /tmp/release/*
