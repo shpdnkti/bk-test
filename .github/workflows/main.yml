@@ -1,0 +1,94 @@
+name: Build BlueKing Smart SaaS
+
+on:
+  push:
+    tags:
+      - '*'
+
+env:
+  BRANCH: main
+  UPLOAD_RELEASE: false
+  APP_CODE: bk_itsm
+  APP_VERSION: 9.9.9
+
+
+jobs:
+  build_frontend:
+    runs-on: ubuntu-20.04
+
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v2
+      ref: ${{BRANCH}}
+      with:
+        fetch-depth: 1
+    
+    - name: Setup Node
+      uses: actions/setup-node@v2
+      with:
+        node-version: '12'
+    
+    - name: Build Frontend
+      id: build-frontend
+      shell: bash
+      run: | 
+        cd ${GITHUB_WORKSPACE}/frontend/pc
+        npm install
+        cd ${GITHUB_WORKSPACE}/frontend/weixin
+        npm install
+        cd ${GITHUB_WORKSPACE}/frontend/
+        npm run build
+        cd ${GITHUB_WORKSPACE}/
+        tar czf ${APP_CODE}_ui_V${APP_VERSION}.tar.gz frontend
+        echo "UI_PKG_MD5=$(md5sum ${APP_CODE}_ui_V${APP_VERSION}.tar.gz)" >> $GITHUB_ENV
+    
+    - name: Upload ui Artifact
+      uses: actions/upload-artifact@v2.2.4
+      with:
+        name: ${APP_CODE}_ui_V${APP_VERSION}.tar.gz
+        path: release
+     
+  build_saas:
+    runs-on: ubuntu-20.04
+    needs: build-frontend
+
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v2
+      ref: ${{BRANCH}}
+      with:
+        fetch-depth: 1
+
+    - name: Setup Python
+      shell: bash
+      run: |
+        wget -c http://bkopen-1252002024.file.myqcloud.com/common/py36_e.tgz -O /opt/py.tgz
+        tar xf py.tgz -C /opt
+        [ -d '/opt/py36_e/bin] && echo "/opt/py36_e/bin" >> $GITHUB_PATH || exit 1
+
+    - name: Build 
+      shell: bash
+      run: |
+        cd ${GITHUB_WORKSPACE}
+        wget -c https://raw.githubusercontent.com/shpdnkti/saas-builder/main/build.sh
+        chmod +x build.sh
+        ./build.sh -s ./ -d ./ --python3-home /opt/py36_e/bin/python3 --app-code ${APP_CODE} --app-version ${APP_VERSION}
+        echo "::set-output name=saas_package::${APP_CODE}_V${APP_VERSION}.tar.gz"
+
+    - name: Create Release
+        id: create_release
+        uses: actions/create-release@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tag_name: ${{ github.ref }}
+          release_name: Release ${{ github.ref }}
+          draft: false
+          prerelease: false
+  
+    - name: Upload Release Asset
+      uses: actions/upload-release-asset@v1
+      with:
+        asset_path: ${{ steps.build-frontend.outputs.ui_package }}
+        asset_name: ${{ steps.build-frontend.outputs.ui_package }}
+        asset_content_type: application/x-gzip 
