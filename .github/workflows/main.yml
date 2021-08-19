@@ -17,7 +17,6 @@ jobs:
     steps:
     - name: Checkout
       uses: actions/checkout@v2
-      ref: ${{BRANCH}}
       with:
         fetch-depth: 1
     
@@ -53,7 +52,6 @@ jobs:
     steps:
     - name: Checkout
       uses: actions/checkout@v2
-      ref: ${{BRANCH}}
       with:
         fetch-depth: 1
 
