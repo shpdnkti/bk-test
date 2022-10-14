@@ -59,7 +59,6 @@ from itsm.component.constants import (
     LAYOUT_CHOICES,
     METHOD_CHOICES,
     NOTIFY_RULE_CHOICES,
-    NOTIFY_TYPE_CHOICES,
     PROCESSOR_CHOICES,
     REGEX_CHOICES,
     SOPS_FIELD_MAP,
@@ -113,7 +112,7 @@ from itsm.workflow.permissions import (
     TemplateFieldPermissionValidate,
     TaskSchemaPermit,
 )
-from itsm.workflow.utils import translate_constant_2
+from itsm.workflow.utils import translate_constant_2, get_notify_type_choice
 from itsm.workflow.validators import (
     WorkflowPipelineValidator,
     add_fields_from_table_validate,
@@ -233,13 +232,15 @@ class WorkflowViewSet(
             "members": SelectMultipleType.get_display_operators(),
         }
 
+        notify_type_choice = get_notify_type_choice()
+
         return Response(
             {
                 "field_type": translate_constant_2(TYPE_CHOICES[:-1]),
                 "source_type": translate_constant_2(SOURCE_CHOICES),
                 "layout_type": translate_constant_2(LAYOUT_CHOICES),
                 "validate_type": translate_constant_2(VALIDATE_CHOICES),
-                "notify_type": translate_constant_2(NOTIFY_TYPE_CHOICES),
+                "notify_type": translate_constant_2(notify_type_choice),
                 "notify_rule_type": translate_constant_2(NOTIFY_RULE_CHOICES),
                 "state_type": translate_constant_2(STATE_TYPE_CHOICES),
                 "processor_type": translate_constant_2(PROCESSOR_CHOICES),
@@ -414,7 +415,6 @@ class StateViewSet(BaseWorkflowElementViewSet):
     @action(detail=True, methods=["get"])
     def variables(self, request, *args, **kwargs):
         state = self.get_object()
-
         # 默认先把field和全局的变量都获取出来
         resource_type = request.GET.get("resource_type", "both")
         exclude_self = request.GET.get("exclude_self", False)
@@ -423,10 +423,36 @@ class StateViewSet(BaseWorkflowElementViewSet):
             exclude_self=exclude_self, resource_type=resource_type, scope="state"
         )
 
+        # 如果是下拉框选项的，则允许显示中文名
+        new_inputs = []
+        for var in valid_inputs:
+            if var["type"] in ["SELECT", "MULTISELECT"]:
+                new_var = copy.deepcopy(var)
+                new_var["key"] = "{}__display".format(var["key"])
+                new_var["name"] = "{}_display".format(var["name"])
+                new_inputs.append(new_var)
+
+        valid_inputs.extend(new_inputs)
+
         # 非提单节点可引用单据属性（提单节点提交前，尚未创建工单）
         if not state.is_first_state:
             valid_inputs.extend(TICKET_GLOBAL_VARIABLES)
 
+        return Response(valid_inputs)
+
+    @action(detail=True, methods=["get"])
+    def group_variables(self, request, *args, **kwargs):
+        state = self.get_object()
+
+        # 默认先把field和全局的变量都获取出来
+        resource_type = request.GET.get("resource_type", "both")
+        exclude_self = request.GET.get("exclude_self", False)
+
+        valid_inputs = state.get_valid_inputs_by_group(
+            exclude_self=exclude_self, resource_type=resource_type, scope="state"
+        )
+
+        # 非提单节点可引用单据属性（提单节点提交前，尚未创建工单）
         return Response(valid_inputs)
 
     @action(detail=True, methods=["get"])
@@ -452,12 +478,17 @@ class StateViewSet(BaseWorkflowElementViewSet):
         当前节点的后置节点
         """
         instance = self.get_object()
+        include_self = request.query_params.get("include_self", "false")
         posts = instance.get_post_states(
             contain_auto=request.query_params.get("contain_auto", "false"),
             exclude_states=[instance.id],
         )
-        serializer = self.get_serializer(posts, many=True)
-        return Response(serializer.data)
+        data = self.get_serializer(posts, many=True).data
+
+        if include_self == "true":
+            instance_data = self.get_serializer(instance).data
+            data.insert(0, instance_data)
+        return Response(data)
 
     @action(detail=True, methods=["post"])
     def add_fields_from_table(self, request, *args, **kwargs):
@@ -680,7 +711,10 @@ class FieldViewSet(BaseFieldViewSet):
         自动从State的fields中移除该字段
         """
         with transaction.atomic():
-            if instance.key == "bk_biz_id" and instance.state.name == "提单":
+            if (
+                instance.key == "bk_biz_id"
+                and instance.id == instance.workflow.first_state.id
+            ):
                 instance.workflow.is_biz_needed = False
                 instance.workflow.save()
             if instance.source != TABLE:
@@ -999,7 +1033,7 @@ class TableViewSet(component_viewsets.ModelViewSet):
     """基础模型视图"""
 
     # permission_classes = (IamAuthWithoutResourcePermit,)
-    queryset = Table.objects.all().order_by("-create_at")
+    queryset = Table.objects.filter(is_builtin=True).order_by("-create_at")
     serializer_class = TableSerializer
     filter_fields = {
         "name": ["contains", "icontains"],
@@ -1103,7 +1137,7 @@ class TaskSchemaViewSet(DynamicListModelMixin, component_viewsets.ModelViewSet):
         """
         src_instance = self.get_object()
         # 通过前端接口复制的任务模板，直接置为草稿，需要重新保存处理
-        new_ids, _ = TaskSchema.objects.clone([src_instance.id], is_draft=True)
+        new_ids = TaskSchema.objects.clone([src_instance.id], is_draft=True)
         return Response(new_ids)
 
     def perform_destroy(self, instance):

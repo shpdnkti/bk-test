@@ -37,9 +37,11 @@ def app_ready_handler(sender, **kwargs):
     from itsm.iadmin.models import CustomNotice, SystemSettings, ReleaseVersionLog
     from itsm.postman.models import RemoteApi, RemoteSystem
     from itsm.service.models import Service
-    from itsm.workflow.models import TemplateField, Table, Workflow
+    from itsm.workflow.models import TemplateField, Table, Workflow, Notify
     from itsm.component.constants import DEFAULT_TEMPLATE_FIELDS, DEFAULT_TABLE
-
+    
+    print("update notify type")
+    Notify.init_builtin_notify()
     print("update notify template")
     CustomNotice.init_default_template()
     print("update notify system_settings")
@@ -69,7 +71,8 @@ def init_super_user():
     for name in settings.INIT_SUPERUSER:
         try:
             User.objects.update_or_create(
-                username=name, defaults={'is_staff': True, 'is_active': True, 'is_superuser': True}
+                username=name,
+                defaults={"is_staff": True, "is_active": True, "is_superuser": True},
             )
         except BaseException as error:
             print("init superuser %s error： %s" % (name, str(error)))
@@ -85,8 +88,8 @@ class IadminConfig(AppConfig):
                 "host": os.getenv("BKAPP_REDIS_HOST"),
                 "port": os.getenv("BKAPP_REDIS_PORT"),
                 "password": os.getenv("BKAPP_REDIS_PASSWORD"),
-                "service_name": os.getenv("BKAPP_REDIS_SERVICE_NAME"),
-                "mode": os.getenv("BKAPP_REDIS_MODE"),
-                "db": os.getenv("BKAPP_REDIS_DB"),
+                "service_name": os.getenv("BKAPP_REDIS_SERVICE_NAME", "mymaster"),
+                "mode": os.getenv("BKAPP_REDIS_MODE", "single"),
+                "db": os.getenv("BKAPP_REDIS_DB", 0),
             }
         post_migrate.connect(app_ready_handler, sender=self)

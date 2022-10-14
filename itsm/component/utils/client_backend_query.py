@@ -25,6 +25,7 @@ SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 import hashlib
 import json
+from math import ceil
 from django.conf import settings
 from django.core.cache import cache
 from django.utils.translation import ugettext as _
@@ -34,7 +35,11 @@ from itsm.component.constants import CACHE_5MIN, CACHE_30MIN, PREFIX_KEY
 from itsm.component.esb.esbclient import client_backend
 from itsm.component.exceptions import ComponentCallError
 from itsm.component.esb.backend_component import bk
-from itsm.component.tasks import update_user_cache, update_bk_business, update_user_departments
+from itsm.component.tasks import (
+    update_user_cache,
+    update_bk_business,
+    update_user_departments,
+)
 
 adapter_api = settings.ADAPTER_API
 
@@ -46,7 +51,10 @@ def get_biz_choices():
         return app_list
 
     apps = get_all_apps()
-    app_list = [{"key": item["bk_biz_id"], "name": item["bk_biz_name"], "desc": _("请选择关联业务")} for item in apps]
+    app_list = [
+        {"key": item["bk_biz_id"], "name": item["bk_biz_name"], "desc": _("请选择关联业务")}
+        for item in apps
+    ]
 
     cache.set(cache_key, app_list, CACHE_30MIN)
     return app_list
@@ -63,11 +71,18 @@ def get_group_app_list(apps, group_apps, group_other, biz_group_conf):
                 continue
             app = apps.pop(str(item["bk_inst_id"]))
             group_apps[group_inst_id]["items"].append(
-                {"key": app["bk_biz_id"], "name": app["bk_biz_name"], "desc": _("请选择关联业务")}
+                {
+                    "key": app["bk_biz_id"],
+                    "name": app["bk_biz_name"],
+                    "desc": _("请选择关联业务"),
+                }
             )
     if apps:
         group_other["items"].extend(
-            [{"key": a["bk_biz_id"], "name": a["bk_biz_name"], "desc": _("请选择关联业务")} for a in list(apps.values())]
+            [
+                {"key": a["bk_biz_id"], "name": a["bk_biz_name"], "desc": _("请选择关联业务")}
+                for a in list(apps.values())
+            ]
         )
 
     app_list = list(group_apps.values())
@@ -91,10 +106,13 @@ def get_group(biz_group_conf, group_enum):
         search_group_list = []
 
     if group_enum:
-        enum = get_attr_enum(bk_obj_id=biz_group_conf["biz_obj_id"], enum_bk_property_id=group_enum)
+        enum = get_attr_enum(
+            bk_obj_id=biz_group_conf["biz_obj_id"], enum_bk_property_id=group_enum
+        )
         group_apps = {
             str(item["bk_inst_id"]): {
-                "name": "%s（%s）" % (item["bk_inst_name"], enum.get(item.get(group_enum), _("未接管"))),
+                "name": "%s（%s）"
+                % (item["bk_inst_name"], enum.get(item.get(group_enum), _("未接管"))),
                 "key": item["bk_inst_id"],
                 "desc": settings.BIZ_GROUP_DESC,
                 "items": [],
@@ -113,7 +131,12 @@ def get_group(biz_group_conf, group_enum):
             for item in search_group_list
         }
 
-    group_other = {"name": _("其他"), "key": "other", "items": [], "desc": settings.BIZ_GROUP_DESC}
+    group_other = {
+        "name": _("其他"),
+        "key": "other",
+        "items": [],
+        "desc": settings.BIZ_GROUP_DESC,
+    }
     return group_apps, group_other
 
 
@@ -124,7 +147,9 @@ def get_attr_enum(bk_obj_id, enum_bk_property_id):
     :param enum_bk_property_id: 枚举属性的bk_property_id
     """
     enum = {}
-    attrs = client_backend.cc.search_object_attribute({"bk_obj_id": bk_obj_id, "bk_supplier_account": "0"})
+    attrs = client_backend.cc.search_object_attribute(
+        {"bk_obj_id": bk_obj_id, "bk_supplier_account": "0"}
+    )
     for attr in attrs:
         if attr["bk_property_id"] == enum_bk_property_id:
             enum = {value["id"]: value["name"] for value in attr["option"]}
@@ -171,11 +196,10 @@ def get_bk_users(format="list", name_type="bk_username", users=None):
     user_md5 = hashlib.md5(json.dumps(users).encode()).hexdigest()
     cache_key = "{}bk_users_{}_{}_{}".format(PREFIX_KEY, format, name_type, user_md5)
     bk_users = cache.get(cache_key)
-
     if not bk_users:
         bk_users = update_user_cache(cache_key, format, name_type, users)
-    else:
-        update_user_cache.delay(cache_key, format, name_type, users)
+    # else:
+    #     update_user_cache.delay(cache_key, format, name_type, users)
     return bk_users
 
 
@@ -196,8 +220,8 @@ def get_bk_business(bk_biz_id, role_type):
         return ""
 
     bk_business = []
-    print('----search_business_list is {}'.format(search_business_list))
-    print('----search_business_list type is {}'.format(type(search_business_list)))
+    print("----search_business_list is {}".format(search_business_list))
+    print("----search_business_list type is {}".format(type(search_business_list)))
     for business in search_business_list:
         if not business:
             continue
@@ -209,6 +233,60 @@ def get_bk_business(bk_biz_id, role_type):
     return ",".join(bk_business)
 
 
+def get_list_department_profiles(params, page_size=500):
+    """
+    分页查询部门的用户信息
+
+    @params params: dict 参数信息
+    @params page_size: int 每页拉取的数量
+    @return result list
+    """
+
+    params["page_size"] = page_size
+    res = client_backend.usermanage.list_department_profiles(params)
+    count = res.get("count")
+
+    # 获取第一页的结果
+    result = res.get("results", [])
+    # 算出来总页数
+    page_number = ceil(count / page_size)
+
+    # 从第二页开始拉取
+    for page in range(2, page_number + 1):
+        params["page"] = page
+        res = client_backend.usermanage.list_department_profiles(params)
+        result.extend(res.get("results", []))
+
+    return result
+
+
+def get_list_departments(params, page_size=500):
+    """
+    分页拉取部门信息
+
+    @params params: dict 参数信息
+    @params page_size: int 每页拉取的数量
+    @return result list
+    """
+
+    params["page_size"] = page_size
+    res = client_backend.usermanage.list_departments(params)
+    count = res.get("count")
+
+    # 获取第一页的结果
+    result = res.get("results", [])
+    # 算出来总页数
+    page_number = ceil(count / page_size)
+
+    # 从第二页开始拉取
+    for page in range(2, page_number + 1):
+        params["page"] = page
+        res = client_backend.usermanage.list_departments(params)
+        result.extend(res.get("results", []))
+
+    return result
+
+
 def get_department_users(department_id, recursive=False, detail=False):
     """获取部门用户列表，支持递归查询"""
     cache_key = "{}department|{}users|{}".format(PREFIX_KEY, department_id, recursive)
@@ -216,22 +294,46 @@ def get_department_users(department_id, recursive=False, detail=False):
 
     if users is None:
         try:
-            res = client_backend.usermanage.list_department_profiles(
+            res = get_list_department_profiles(
                 {
                     "id": department_id,
                     "recursive": recursive,
                     # 默认只返回id/username，detail为True则返回所有字段
                     "detail": detail,
-                    "no_page": True,
                 }
             )
             users = [item["username"] for item in res]
             cache.set(cache_key, users, CACHE_5MIN)
         except ComponentCallError as e:
-            logger.error("获取组织架构用户失败：department_id=%s, error=%s" % (department_id, str(e)))
+            logger.error(
+                "获取组织架构用户失败：department_id=%s, error=%s" % (department_id, str(e))
+            )
             return []
 
     return users
+
+
+def get_user_department_ids(username):
+    """
+    获取用户的组织架构ID，用于提升用户的组织架构提单速度
+    """
+    try:
+        res = client_backend.usermanage.list_profile_departments(
+            {"id": username, "with_family": True}
+        )
+        # 用户当前的组织架构id
+        current_department_ids = [int(item["id"]) for item in res]
+        department_ids = []
+        for item in res:
+            for family in item.get("family", []):
+                department_ids.append(family["id"])
+
+        department_ids.extend(current_department_ids)
+
+    except ComponentCallError as e:
+        logger.error("获取用户部门ids失败：username=%s, error=%s" % (username, str(e)))
+        return []
+    return set(department_ids)
 
 
 def get_department_info(department_id):
@@ -245,9 +347,9 @@ def get_department_info(department_id):
 
 def list_departments_info():
     try:
-        res = client_backend.usermanage.list_departments({"fields": "name,id", "no_page": True})
+        res = get_list_departments({"fields": "name,id"})
     except ComponentCallError as e:
-        logger.error("获取组织架构失败：error=%s".format(str(e)))
+        logger.error("获取组织架构失败：error={}".format(str(e)))
         return []
     return res
 
@@ -269,8 +371,14 @@ def get_systems():
     """获取ESB中的组件系统列表"""
     try:
         # res = client_backend.api_gateway.get_systems()
-        res = bk.http({'path': '/api/c/compapi/v2/esb/get_systems/', 'method': 'get', 'query_params': {}})
-        return res.get('data', [])
+        res = bk.http(
+            {
+                "path": "/api/c/compapi/v2/esb/get_systems/",
+                "method": "get",
+                "query_params": {},
+            }
+        )
+        return res.get("data", [])
     except Exception as e:
         logger.error("获取ESB中的组件系统列表：error=%s" % str(e))
         return []
@@ -282,19 +390,23 @@ def get_components(system_names):
         # res = client_backend.api_gateway.get_components({"system_names": system_names})
         res = bk.http(
             {
-                'path': '/api/c/compapi/v2/esb/get_components/',
-                'method': 'get',
-                'query_params': {'system_names': system_names},
+                "path": "/api/c/compapi/v2/esb/get_components/",
+                "method": "get",
+                "query_params": {"system_names": system_names},
             }
         )
-        return res.get('data', [])
+        return res.get("data", [])
     except Exception as e:
         logger.error("获取指定系统的组件列表: system_names=%s, error=%s" % (system_names, str(e)))
         return []
 
 
 def get_group_next_data(bk_obj_id, bk_inst_id):
-    params = {"bk_supplier_account": "0", "bk_obj_id": bk_obj_id, "bk_inst_id": bk_inst_id}
+    params = {
+        "bk_supplier_account": "0",
+        "bk_obj_id": bk_obj_id,
+        "bk_inst_id": bk_inst_id,
+    }
     try:
         rsp = client_backend.cc.search_inst_association_topo(params)
         next_topo = rsp[0]["children"]
@@ -316,25 +428,31 @@ def get_template_list(bk_biz_id=2):
 
 
 def get_user_leader(username):
-    name_list = username.strip(',').split(",")
-    leaders_results = settings.ADAPTER_API.get_batch_users(name_list, properties='leader', 
-                                                           is_exact=True)
+    name_list = username.strip(",").split(",")
+    leaders_results = settings.ADAPTER_API.get_batch_users(
+        name_list, properties="leader", is_exact=True
+    )
 
     def retry(user_list):
         """
         重试拉取leader
         """
-        results = settings.ADAPTER_API.get_batch_users(user_list, properties='leader',
-                                                       is_exact=True)
+        results = settings.ADAPTER_API.get_batch_users(
+            user_list, properties="leader", is_exact=True
+        )
 
-        logger.info("[retry] name_list is {}, leaders_results is {}".format(user_list, results))
+        logger.info(
+            "[retry] name_list is {}, leaders_results is {}".format(user_list, results)
+        )
 
         if not results:
             return []
-        
+
         return results
-        
-    logger.info("name_list is {}, leaders_results is {}".format(name_list, leaders_results))
+
+    logger.info(
+        "name_list is {}, leaders_results is {}".format(name_list, leaders_results)
+    )
     if not leaders_results:
         leaders_results = retry(user_list=name_list)
 

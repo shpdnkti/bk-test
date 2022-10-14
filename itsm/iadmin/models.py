@@ -22,7 +22,7 @@ NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES
 WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE
 SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 """
-
+import copy
 import os
 import re
 
@@ -40,12 +40,17 @@ from itsm.component.constants import (
     LEN_MIDDLE,
     LEN_NORMAL,
     LEN_SHORT,
-    NOTIFY_TYPE_CHOICES,
+    PUBLIC_PROJECT_PROJECT_KEY,
 )
 from itsm.component.db import managers
 from itsm.component.fields import IOField
 from itsm.component.utils.basic import now
-from itsm.iadmin.contants import ACTION_CHOICES, DEFAULT_SETTINGS, NOTIFY_TEMPLATE
+from itsm.iadmin.contants import (
+    ACTION_CHOICES,
+    DEFAULT_SETTINGS,
+    NOTIFY_TEMPLATE,
+    GENERAL_NOTIFY_TEMPLATE_LIST,
+)
 
 # 匹配版本
 VERSION_PATTERN = re.compile(r".*:(.*)].*")
@@ -98,7 +103,12 @@ class SystemSettings(Model):
     def init_default_settings(cls, *args, **kwargs):
         for setting in DEFAULT_SETTINGS:
             SystemSettings.objects.get_or_create(
-                defaults={"type": setting[1], "value": setting[2], "creator": "system", "updated_by": "system", },
+                defaults={
+                    "type": setting[1],
+                    "value": setting[2],
+                    "creator": "system",
+                    "updated_by": "system",
+                },
                 key=setting[0],
             )
 
@@ -115,15 +125,25 @@ class CustomNotice(models.Model):
         help_text=_("工单字段的值可以作为参数写到模板中，格式如：【ITSM】${service}管理单【${action}】提醒"),
     )
     content_template = models.TextField(
-        _("内容模板"), default="", null=True, blank=True, help_text=_("工单字段的值可以作为参数写到模板中，格式如：单号:${sn}")
+        _("内容模板"),
+        default="",
+        null=True,
+        blank=True,
+        help_text=_("工单字段的值可以作为参数写到模板中，格式如：单号:${sn}"),
     )
-    action = models.CharField(_("通知模板类型"), max_length=LEN_SHORT, choices=ACTION_CHOICES, default="default")
-    notify_type = models.CharField(_("通知方式"), max_length=LEN_SHORT, choices=NOTIFY_TYPE_CHOICES, default="EMAIL")
+    action = models.CharField(
+        _("通知模板类型"), max_length=LEN_SHORT, choices=ACTION_CHOICES, default="default"
+    )
+    notify_type = models.CharField(_("通知方式"), max_length=LEN_SHORT, default="EMAIL")
     create_at = models.DateTimeField(_("创建时间"), auto_now_add=True)
     update_at = models.DateTimeField(_("更新时间"), auto_now=True)
     updated_by = models.CharField(_("更新人"), max_length=LEN_NORMAL, default="system")
     used_by = models.CharField(_("使用者"), max_length=LEN_NORMAL, default="system")
     version = models.CharField(_("版本"), max_length=LEN_SHORT, default="V1")
+
+    project_key = models.CharField(
+        _("项目key"), max_length=LEN_SHORT, null=False, default=PUBLIC_PROJECT_PROJECT_KEY
+    )
 
     auth_resource = {"resource_type": "flow_element", "resource_type_name": "流程元素"}
     resource_operations = ["flow_element_manage"]
@@ -134,43 +154,83 @@ class CustomNotice(models.Model):
         verbose_name_plural = _("通知模板")
 
     def __unicode__(self):
-        return "%s-%s" % (self.get_action_display(), self.get_notify_type_display())
+        return "%s-%s" % (self.get_action_display(), self.notify_type)
 
     @property
     def action_name(self):
         return self.get_action_display()
 
     @classmethod
-    def init_default_template(cls, *args, **kwargs):
+    def init_project_template(cls, project_key):
+        # 1.获取第三方通知方式
+        from itsm.workflow.utils import get_third_party_notify_type
 
-        # 升级（V1->V2）或初始化通知模板
-        if CustomNotice.objects.filter(version="V1").exists():
-            CustomNotice.objects.all().delete()
+        third_party_notify_type_list = get_third_party_notify_type()
+        # 2.初始化第三方通知方式模版
+        third_party_notify_template_list = []
+        for notify_type in third_party_notify_type_list:
+            general_notify_template = copy.deepcopy(GENERAL_NOTIFY_TEMPLATE_LIST)
+            for template in general_notify_template:
+                template[3] = notify_type
+            third_party_notify_template_list.extend(general_notify_template)
 
-        for template in NOTIFY_TEMPLATE:
+        for template in NOTIFY_TEMPLATE + third_party_notify_template_list:
             try:
-                CustomNotice.objects.update_or_create(
-                    defaults={
-                        'title_template': template[0],
-                        'content_template': template[1],
-                        "used_by": template[4],
-                        "version": "V2",
-                    },
+                CustomNotice.objects.get(
                     action=template[2],
                     notify_type=template[3],
+                    used_by=template[4],
+                    version="V2",
+                    project_key=project_key,
                 )
-            except CustomNotice.MultipleObjectsReturned:
-                CustomNotice.objects.filter(action=template[2], notify_type=template[3]).delete()
+            except CustomNotice.DoesNotExist:
                 CustomNotice.objects.create(
                     **{
-                        'title_template': template[0],
-                        'content_template': template[1],
+                        "title_template": template[0],
+                        "content_template": template[1],
+                        "action": template[2],
+                        "used_by": template[4],
+                        "notify_type": template[3],
+                        "version": "V2",
+                        "project_key": project_key,
+                    }
+                )
+            except CustomNotice.MultipleObjectsReturned:
+                CustomNotice.objects.filter(
+                    action=template[2],
+                    notify_type=template[3],
+                    project_key=project_key,
+                ).delete()
+                CustomNotice.objects.create(
+                    **{
+                        "title_template": template[0],
+                        "content_template": template[1],
                         "used_by": template[4],
                         "version": "V2",
                         "action": template[2],
                         "notify_type": template[3],
+                        "project_key": project_key,
                     }
                 )
+
+    @classmethod
+    def init_default_template(cls, *args, **kwargs):
+
+        # 升级（V1->V2）或初始化通知模板
+        if CustomNotice.objects.filter(version="V1").exists():
+            CustomNotice.objects.filter(version="V1").delete()
+
+        from itsm.project.models import Project
+
+        project_keys = Project.objects.filter(is_deleted=False).values_list(
+            "key", flat=True
+        )
+
+        for project_key in project_keys:
+            # 公共项目不参与初始化通知模板
+            if project_key == PUBLIC_PROJECT_PROJECT_KEY:
+                continue
+            cls.init_project_template(project_key=project_key)
 
 
 class ReleaseVersionLogManager(models.Manager):
@@ -278,7 +338,9 @@ class Data(models.Model):
     )
     key = models.CharField(_("关键字"), max_length=LEN_MIDDLE, db_index=True)
     value = IOField(verbose_name=_("值"))
-    type = models.CharField(_("类型"), choices=TYPE_CHOICES, default="string", max_length=LEN_SHORT)
+    type = models.CharField(
+        _("类型"), choices=TYPE_CHOICES, default="string", max_length=LEN_SHORT
+    )
     expire_at = models.DateTimeField(_("过期时间"), null=True, blank=True, db_index=True)
 
     objects = DataManager()

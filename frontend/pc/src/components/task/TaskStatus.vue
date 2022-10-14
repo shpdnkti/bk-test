@@ -21,61 +21,68 @@
   -->
 
 <template>
-    <span
-        v-if="info"
-        class="node-status"
-        :class="info.cls">
-        <i class="status-icon" :class="info.icon"></i>
-        <span class="node-status-text">{{ info.text }}</span>
-    </span>
+  <span
+    v-if="info"
+    class="node-status"
+    :class="info.cls">
+    <i class="status-icon" :class="info.icon"></i>
+    <span class="node-status-text">{{ info.text }}</span>
+  </span>
 </template>
 
 <script>
 
-    export default {
-        name: 'TaskStatus',
-        props: {
-            status: {
-                type: String,
-                default: ''
-            }
-        },
-        data () {
-            return {
-                info: ''
-            }
-        },
-        watch: {
-            status () {
-                this.getStatusInfo()
-            }
-        },
-        created () {
-            this.getStatusInfo()
-        },
-        methods: {
-            getStatusInfo () {
-                const statusMap = {
-                    'RUNNING': {
-                        cls: 'running',
-                        icon: 'bk-itsm-icon icon-icon-loading',
-                        text: this.$t(`m.task["执行中"]`)
-                    },
-                    'SUCCESS': {
-                        cls: 'success',
-                        icon: 'bk-icon icon-check-circle-shape',
-                        text: this.$t(`m.task["执行成功"]`)
-                    },
-                    'FAILED': {
-                        cls: 'failed',
-                        icon: 'bk-icon icon-exclamation',
-                        text: this.$t(`m.task["执行失败"]`)
-                    }
-                }
-                this.info = statusMap[this.status] || ''
-            }
-        }
-    }
+  export default {
+    name: 'TaskStatus',
+    props: {
+      status: {
+        type: String,
+        default: '',
+      },
+      nodeType: {
+        type: String,
+      },
+    },
+    data() {
+      return {
+        info: '',
+      };
+    },
+    watch: {
+      status() {
+        this.getStatusInfo();
+      },
+    },
+    created() {
+      this.getStatusInfo();
+    },
+    methods: {
+      getStatusInfo() {
+        const runningStatusMap = {
+          APPROVAL: this.$t('m.task["等待审批中"]'),
+          NORMAL: this.$t('m.task["等待处理中"]'),
+        };
+        const statusMap = {
+          RUNNING: {
+            cls: 'running',
+            icon: 'bk-itsm-icon icon-icon-loading',
+            text: runningStatusMap[this.nodeType] || this.$t('m.task["执行中"]'),
+          },
+          SUCCESS: {
+            cls: 'success',
+            icon: 'bk-icon icon-check-circle-shape',
+            text: this.$t('m.task["执行成功"]'),
+          },
+          FAILED: {
+            cls: 'failed',
+            icon: 'bk-itsm-icon icon-itsm-icon-square-one',
+            text: this.$t('m.task["执行失败"]'),
+          },
+        };
+        this.info = statusMap[this.status] || '';
+      },
+    },
+  };
 </script>
 
 <style lang="scss" scoped>
@@ -119,13 +126,14 @@
         }
         &.failed {
             color: #ea3536;
-            .status-icon {
-                font-size: 12px;
-                padding: 1px;
-                color: #ffffff;
-                background: #ea3536;
-                border-radius: 50%;
-            }
+            font-size: 14px;
+            // .status-icon {
+            //     font-size: 12px;
+            //     padding: 1px;
+            //     color: #ffffff;
+            //     background: #ea3536;
+            //     // border-radius: 50%;
+            // }
         }
     }
 </style>

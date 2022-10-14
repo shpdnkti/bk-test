@@ -22,11 +22,16 @@ NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES
 WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE
 SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 """
-
+import base64
+import importlib
 from urllib.parse import urljoin
 
 from blueapps.conf.default_settings import *  # noqa
 from blueapps.conf.log import get_logging_config_dict
+from blueapps.opentelemetry.utils import inject_logging_trace_info
+from django.http import HttpResponseRedirect
+from django.urls import reverse
+
 from config import (
     APP_CODE,
     BASE_DIR,
@@ -34,7 +39,20 @@ from config import (
     PROJECT_ROOT,
     BK_PAAS_HOST,
     BK_PAAS_INNER_HOST,
+    RUN_VER,
 )
+
+# 标准运维页面服务地址
+SITE_URL_SOPS = "/o/bk_sops/"
+
+# 针对 paas_v3 容器化差异化配置
+ENGINE_REGION = os.environ.get("BKPAAS_ENGINE_REGION", "open")
+if ENGINE_REGION == "default":
+    env_settings = importlib.import_module("adapter.config.sites.%s.env" % "v3")
+    for _setting in dir(env_settings):
+        if _setting.upper() == _setting:
+            locals()[_setting] = getattr(env_settings, _setting)
+    SITE_URL_SOPS = "/bk--sops/"
 
 # 请在这里加入你的自定义 APP
 INSTALLED_APPS += (
@@ -50,7 +68,6 @@ INSTALLED_APPS += (
     "django_signal_valve",
     # itsm
     "itsm.gateway",
-    "itsm.helper",
     "itsm.role",
     "itsm.pipeline_plugins",
     "itsm.ticket",
@@ -64,16 +81,17 @@ INSTALLED_APPS += (
     "itsm.misc",
     "itsm.trigger",
     "itsm.task",
+    "itsm.openapi",
     "data_migration",
     # 'silk',
     "mptt",
+    "apigw_manager.apigw",
     "django_mptt_admin",
     "django_extensions",
     "rest_framework",
     "corsheaders",
     "django_filters",
     # "autofixture",
-    "requests_tracker",
     # wiki
     "django.contrib.humanize.apps.HumanizeConfig",
     "django_nyt.apps.DjangoNytConfig",
@@ -84,7 +102,17 @@ INSTALLED_APPS += (
     "weixin",
     # 'flower',
     # 'monitors',
+    "itsm.monitor",
+    "blueapps.opentelemetry.instrument_app",
+    "itsm.plugin_service",
 )
+
+INSTALLED_APPS = ("itsm.helper",) + INSTALLED_APPS
+
+AUTHENTICATION_BACKENDS += ("itsm.openapi.authentication.backend.CustomUserBackend",)
+
+IS_PAAS_V3 = int(os.getenv("BKPAAS_MAJOR_VERSION", False)) == 3
+IS_OPEN_V3 = IS_PAAS_V3 and RUN_VER == "open"
 
 # IAM 开启开关
 USE_IAM = True if os.getenv("USE_IAM", "true").lower() == "true" else False
@@ -99,6 +127,7 @@ if USE_IAM:
 # 如果你已经了解每个默认 MIDDLEWARE 的作用，确实需要去掉某些 MIDDLEWARE，或者改动先后顺序，请去掉下面的注释，然后修改
 MIDDLEWARE = (
     # 手动关闭服务中间件，需要到admin里设置key='SERVICE_SWITCH'这条数据的value
+    "itsm.component.misc_middlewares.HttpsMiddleware",
     "itsm.component.misc_middlewares.ServiceSwitchCheck",
     # api网关接口豁免
     "itsm.component.misc_middlewares.ApiIgnoreCheck",
@@ -132,7 +161,9 @@ MIDDLEWARE = (
     # enable nginx http-auth
     # 'itsm.component.misc_middlewares.NginxAuthProxy',
     "itsm.component.misc_middlewares.InstrumentProfilerMiddleware",
-    # 'pyinstrument.middleware.ProfilerMiddleware',
+    "apigw_manager.apigw.authentication.ApiGatewayJWTGenericMiddleware",  # JWT 认证
+    "apigw_manager.apigw.authentication.ApiGatewayJWTAppMiddleware",  # JWT 透传的应用信息
+    "apigw_manager.apigw.authentication.ApiGatewayJWTUserMiddleware",  # JWT 透传的用户信息
 )
 
 # 所有环境的日志级别可以在这里配置
@@ -177,6 +208,18 @@ CELERY_IMPORTS = (
 
 # load logging settings
 LOGGING = get_logging_config_dict(locals())
+
+# 需要添加的 trace 相关信息格式
+inject_formatters = ("verbose",)
+# 注入到日志配置，会直接在对应 formatter 格式之后添加 trace_format
+# 日志中添加trace_id
+ENABLE_OTEL_TRACE = True if os.getenv("BKAPP_ENABLE_OTEL_TRACE", "0") == "1" else False
+BK_APP_OTEL_INSTRUMENT_DB_API = (
+    True if os.getenv("BKAPP_OTEL_INSTRUMENT_DB_API", "0") == "1" else False
+)
+if ENABLE_OTEL_TRACE:
+    trace_format = "[trace_id]: %(otelTraceID)s [span_id]: %(otelSpanID)s [resource.service.name]: %(otelServiceName)s"
+    inject_logging_trace_info(LOGGING, inject_formatters, trace_format)
 
 # 初始化管理员列表，列表中的人员将拥有预发布环境和正式环境的管理员权限
 # 注意：请在首次提测和上线前修改，之后的修改将不会生效
@@ -238,7 +281,7 @@ if locals().get("DISABLED_APPS"):
 # Django 项目配置 - i18n
 # ==============================================================================
 TIME_ZONE = "Asia/Shanghai"
-LANGUAGE_CODE = os.environ.get("BKAPP_BACKEND_LANGUAGE", "zh_CN")
+LANGUAGE_CODE = os.environ.get("BKAPP_BACKEND_LANGUAGE", "zh-hans")
 SITE_ID = 1
 USE_I18N = True
 USE_L10N = True
@@ -354,6 +397,25 @@ else:
         }
     }
 
+CACHES.update(
+    {
+        "db": {
+            "BACKEND": "django.core.cache.backends.db.DatabaseCache",
+            "LOCATION": "django_cache",
+        },
+        "login_db": {
+            "BACKEND": "django.core.cache.backends.db.DatabaseCache",
+            "LOCATION": "account_cache",
+        },
+        "dummy": {
+            "BACKEND": "django.core.cache.backends.dummy.DummyCache",
+        },
+        "locmem": {
+            "BACKEND": "django.core.cache.backends.locmem.LocMemCache",
+        },
+    }
+)
+
 # ==============================================================================
 # Django 项目配置 - 其他
 # ==============================================================================
@@ -427,7 +489,7 @@ DATE_FORMAT = "Y-m-d"
 # NOTE 不要改动，否则，可能会改成和其他app的一样，这样会影响登录
 # SESSION_COOKIE_PATH = SITE_URL
 # Age of cookie, in seconds (default: 60 * 60 * 24 * 7 * 2  <2 weeks>).
-SESSION_COOKIE_AGE = 60 * 60 * 24 * 1 * 1  # 设置cookie有效期为1小时
+# SESSION_COOKIE_AGE = 60 * 60 * 24 * 1 * 1  # 设置cookie有效期为1小时
 
 MEDIA_ROOT = os.path.join(PROJECT_ROOT, "USERRES")
 # MEDIA_URL = '/media/'
@@ -607,7 +669,10 @@ CLOSE_NOTIFY = os.environ.get("BKAPP_CLOSE_NOTIFY", None)
 BK_CC_HOST = os.environ.get("BK_CC_HOST", "#")
 BK_JOB_HOST = os.environ.get("BK_JOB_HOST", "#")
 
-BK_USER_MANAGE_HOST = os.environ.get("BK_USER_MANAGE_HOST", BK_PAAS_HOST)
+# 适配容器化
+USER_MANGE_HOST = os.environ.get("BK_COMPONENT_API_URL", BK_PAAS_HOST)
+
+BK_USER_MANAGE_HOST = os.environ.get("BK_USER_MANAGE_HOST", USER_MANGE_HOST)
 
 BK_USER_MANAGE_WEIXIN_HOST = os.environ.get("BK_USER_MANAGE_WEIXIN_HOST", BK_PAAS_HOST)
 
@@ -665,22 +730,19 @@ PROFILER = {
 # The name of the class to use to run the test suite
 TEST_RUNNER = "itsm.tests.runner.ItsmTestRunner"
 
-# 标准运维页面服务地址
-SITE_URL_SOPS = "/o/bk_sops/"
-
 # 统一转发前缀
 PREFIX_SOPS = ""
 
 # 设置被代理的标准运维插件AJAX请求地址，比如API网关的接口
 # 'https://paasee-dev.XX.com/t/bk_sops/apigw/dispatch_plugin_query/'
 SOPS_PROXY_URL = os.environ.get(
-    "BKAPP_SOPS_PROXY_URL", "{}/o/bk_sops/".format(BK_PAAS_INNER_HOST)
+    "BKAPP_SOPS_PROXY_URL", "{}{}".format(BK_PAAS_INNER_HOST, SITE_URL_SOPS)
 )
 
 # 设置被代理的标准运维插件静态资源地址，比如标准运维的site_url或API网关接口
 # 'https://paasee-dev.XX.com/t/bk_sops'
 SOPS_SITE_URL = os.environ.get(
-    "BKAPP_SOPS_SITE_URL", "{}/o/bk_sops/".format(BK_PAAS_HOST)
+    "BKAPP_SOPS_SITE_URL", "{}{}".format(BK_PAAS_HOST, SITE_URL_SOPS)
 )
 
 # 允许转发的非静态内容路径
@@ -729,7 +791,11 @@ BK_DESKTOP_URL = os.environ.get("BK_DESKTOP_URL") or BK_PAAS_HOST
 
 BK_IAM_API_PREFIX = SITE_URL + "openapi"
 BK_API_USE_TEST_ENV = True if os.environ.get("BK_API_USE_TEST_ENV") == "True" else False
-BK_IAM_ESB_PAAS_HOST = os.environ.get("BK_IAM_ESB_PAAS_HOST", BK_PAAS_INNER_HOST)
+
+# iam适配容器化
+IAM_ESB_PAAS_HOST = os.environ.get("BK_COMPONENT_API_URL", BK_PAAS_INNER_HOST)
+BK_IAM_ESB_PAAS_HOST = os.environ.get("BK_IAM_ESB_PAAS_HOST", IAM_ESB_PAAS_HOST)
+
 IAM_INITIAL_FILE = os.environ.get("BKAPP_IAM_INITIAL_FILE", "")
 
 CALLBACK_AES_KEY = "APPROVAL_RESULT"
@@ -743,10 +809,10 @@ MY_OA_CALLBACK_URL = os.environ.get("MY_OA_CALLBACK_URL", "")
 WEIXIN_APP_EXTERNAL_SHARE_HOST = "{}weixin/".format(
     os.environ.get("BKAPP_WEIXIN_APP_EXTERNAL_HOST", FRONTEND_URL)
 )
-TICKET_NOTIFY_HOST = WEIXIN_APP_EXTERNAL_SHARE_HOST.replace("https", "http")
+TICKET_NOTIFY_HOST = WEIXIN_APP_EXTERNAL_SHARE_HOST
 
 FILE_CHARSET = "utf-8"
-LANGUAGE_CODE = "zh-hans"
+# LANGUAGE_CODE = "zh-hans"
 DEFAULT_AUTO_FIELD = "django.db.models.AutoField"
 
 # celery允许接收的数据格式，可以是一个字符串，比如'json'
@@ -761,10 +827,64 @@ timezone = "Asia/Shanghai"
 
 CELERY_TIMEZONE = "Asia/Shanghai"
 USE_TZ = False
+
+# 通知消息模版
+CONTENT_CREATOR_WITH_TRANSLATION = (
+    True
+    if os.getenv("CONTENT_CREATOR_WITH_TRANSLATION", "true").lower() == "true"
+    else False
+)
+
+# 系统api调用账户
+SYSTEM_USE_API_ACCOUNT = "admin"
+
 # 蓝盾
 DEVOPS_CLIENT_URL = os.environ.get("DEVOPS_CLIENT_URL", "")
 DEVOPS_BASE_URL = os.environ.get("DEVOPS_BASE_URL", "")
 
+api_public_key = os.environ.get("APIGW_PUBLIC_KEY", "")
+APIGW_PUBLIC_KEY = base64.b64decode(api_public_key)
+
 # show.py 敏感信息处理, 内部白皮书地址，内部登陆地址
 BK_IEOD_DOC_URL = os.environ.get("BK_IEOD_DOC_URL", "")
 BK_IEOD_LOGIN_URL = os.environ.get("BK_IEOD_LOGIN_URL", "")
+
+# itsm-tapd 网关API地址
+ITSM_TAPD_APIGW = os.environ.get("ITSM_TAPD_APIGW", "")
+# tapd 项目授权链接
+TAPD_OAUTH_URL = os.environ.get("TAPD_OAUTH_URL", "")
+
+# bkchat快速审批
+USE_BKCHAT = True if os.getenv("USE_BKCHAT", "true").lower() == "true" else False
+if USE_BKCHAT:
+    IM_TOKEN = os.environ.get("BKCHAT_IM_TOKEN", "")
+    BKCHAT_URL = os.environ.get("BKCHAT_URL", "")
+    BKCHAT_APPID = os.environ.get("BKCHAT_APPID", "")
+    BKCHAT_APPKEY = os.environ.get("BKCHAT_APPKEY", "")
+
+
+def redirect_func(request):
+    login_page_url = reverse("account:login_page")
+    next_url = "{}?refer_url={}".format(login_page_url, request.path)
+    return HttpResponseRedirect(next_url)
+
+
+BLUEAPPS_PAGE_401_RESPONSE_FUNC = redirect_func
+
+try:
+    # 自动过单时间，默认为20
+    AUTO_APPROVE_TIME = int(os.environ.get("AUTO_APPROVE_TIME", 20))
+except Exception:
+    AUTO_APPROVE_TIME = 20
+
+OPEN_VOICE_NOTICE = (
+    True if os.getenv("BKAPP_OPEN_VOICE_NOTICE", "false").lower() == "true" else False
+)
+
+# apigw的配置
+BK_APIGW_NAME = os.getenv("BK_APIGW_NAME", "bk-itsm")
+# APIGW 访问地址
+BK_API_URL_TMPL = os.getenv("BK_API_URL_TMPL")
+
+# 蓝鲸插件授权过滤 APP
+PLUGIN_DISTRIBUTOR_NAME = os.getenv("BKAPP_PLUGIN_DISTRIBUTOR_NAME", APP_CODE)

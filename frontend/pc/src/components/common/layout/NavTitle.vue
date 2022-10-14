@@ -21,41 +21,45 @@
   -->
 
 <template>
-    <div class="nav">
-        <div class="nav-title">
-            <arrows-left-icon v-if="showIcon" @click="goBack"></arrows-left-icon>
-            <span class="title-name">{{ titleName }}</span>
-            <slot name="step"></slot>
-        </div>
-        <div class="nav-tab">
-            <slot name="tab"></slot>
-        </div>
+  <div class="nav">
+    <div class="nav-title">
+      <arrows-left-icon v-if="showIcon" @click="goBack"></arrows-left-icon>
+      <span class="title-name">{{ titleName }}</span>
+      <div class="step">
+        <slot name="step"></slot>
+      </div>
     </div>
+    <div class="nav-tab">
+      <slot name="tab"></slot>
+    </div>
+  </div>
 </template>
 
 <script>
-    export default {
-        name: 'navTitle',
-        props: {
-            showIcon: {
-                type: Boolean,
-                default: false
-            },
-            titleName: {
-                type: String,
-                default: '--'
-            }
-        },
-        methods: {
-            goBack () {
-                this.$emit('goBack')
-            }
-        }
-    }
+  export default {
+    name: 'navTitle',
+    props: {
+      showIcon: {
+        type: Boolean,
+        default: false,
+      },
+      titleName: {
+        type: String,
+        default: '--',
+      },
+    },
+    methods: {
+      goBack() {
+        this.$emit('goBack');
+      },
+    },
+  };
 </script>
 
 <style lang="scss" scoped>
     .nav {
+        position: relative;
+        z-index: 101;
         box-shadow: 0px 2px 2px 0px rgba(0,0,0,0.1);
         .nav-title {
             height: 52px;
@@ -69,6 +73,10 @@
                 font-size: 16px;
                 margin-left: 11px;
             }
+            .step {
+                width: 600px;
+                margin: 0 auto;
+            }
         }
         /deep/ .nav-tab {
             background: #fff;
@@ -76,6 +84,12 @@
                 padding-left: 10px;
             }
         }
+        /deep/ .nav-step {
+            top: 0;
+            left: 0;
+            position: absolute;
+            margin: 0 auto;
+        }
     }
-    
+
 </style>

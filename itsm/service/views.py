@@ -22,10 +22,12 @@ NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES
 WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE
 SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 """
-
+import json
 import operator
 from functools import reduce
 
+from django.http import FileResponse
+from django.utils.encoding import escape_uri_path
 from django.utils.translation import ugettext as _
 from django_bulk_update.helper import bulk_update
 from rest_framework import serializers
@@ -39,17 +41,17 @@ from itsm.component.constants import (
     PY_IMPACT,
     SERVICE_LIST,
     SLA_MATRIX,
-    INVISIBLE,
     GENERAL,
     OPEN,
     ORGANIZATION,
-    API,
     DEFAULT_PROJECT_PROJECT_KEY,
 )
 from itsm.component.drf import viewsets as component_viewsets
 from itsm.component.drf.mixins import DynamicListModelMixin
 from itsm.component.exceptions import ParamError, CatalogDeleteError
 from itsm.component.exceptions import ServiceNotExist, TableNotExist
+from itsm.component.utils.basic import create_version_number
+from itsm.component.utils.misc import JsonEncoder
 from itsm.service.models import (
     CatalogService,
     DictData,
@@ -63,7 +65,6 @@ from itsm.service.models import (
     ServiceSla,
 )
 from itsm.component.drf import permissions as perm
-from itsm.service.permissions import ServiceDeletePermit
 from itsm.service.serializers import (
     CatalogServiceEditSerializer,
     CatalogServiceSerializer,
@@ -77,6 +78,8 @@ from itsm.service.serializers import (
     SysDictSerializer,
     DictKeySerializer,
     ServiceConfigSerializer,
+    ServiceListSerializer,
+    ServiceImportSerializer,
 )
 from itsm.sla.models import PriorityMatrix
 from mptt.exceptions import InvalidMove
@@ -226,7 +229,7 @@ class CatalogServiceViewSet(component_viewsets.ModelViewSet):
 
     serializer_class = CatalogServiceSerializer
     queryset = CatalogService.objects.filter(is_deleted=False)
-    permission_classes = (perm.IamAuthWithoutResourcePermit,)
+    permission_classes = ()
     filter_fields = {
         "id": ["exact", "in"],
         "catalog": ["exact", "in"],
@@ -245,21 +248,17 @@ class CatalogServiceViewSet(component_viewsets.ModelViewSet):
         if not catalog_id:
             raise ParamError("请提供合法的目录ID！")
 
+        catalog_ids = ServiceCatalog.get_descendant_ids(catalog_id)
         catalog_services = CatalogService.objects.filter(
-            catalog_id=catalog_id
+            catalog_id__in=catalog_ids
         ).order_by("order")
         if not catalog_services.exists():
             return Response([])
         service_ids = catalog_services.values_list("service_id", flat=True)
-        ordering = "FIELD(`id`, {})".format(
-            ",".join(["'{}'".format(v) for v in service_ids])
-        )
         query_params = dict(pk__in=service_ids)
         if is_valid is not None:
             query_params.update({"is_valid": is_valid})
-        services = Service.objects.filter(
-            display_type__in=[OPEN, GENERAL, ORGANIZATION], **query_params
-        ).extra(select={"ordering": ordering}, order_by=["ordering"])
+        services = Service.objects.filter(**query_params).order_by("-update_at")
 
         # 支持额外过滤选项
         if name:
@@ -268,9 +267,7 @@ class CatalogServiceViewSet(component_viewsets.ModelViewSet):
         if service_key and service_key != "globalview":
             services = services.filter(key=service_key)
 
-        # 服务展示过滤
-        conditions = Service.permission_filter(request.user.username)
-        services = services.filter(reduce(operator.or_, conditions))
+        services = services
         context = self.get_serializer_context()
         if request.query_params.get("page", "") and request.query_params.get(
             "page_size", ""
@@ -355,10 +352,8 @@ class ServiceViewSet(component_viewsets.AuthModelViewSet):
     """服务项视图集合"""
 
     serializer_class = ServiceSerializer
-    queryset = Service.objects.exclude(display_type=INVISIBLE)
-    permission_classes = component_viewsets.AuthModelViewSet.permission_classes + (
-        ServiceDeletePermit,
-    )
+    queryset = Service.objects.all()
+    permission_classes = component_viewsets.AuthModelViewSet.permission_classes
     permission_free_actions = ["retrieve"]
 
     ordering_fields = ("name", "create_at", "update_at")
@@ -390,7 +385,10 @@ class ServiceViewSet(component_viewsets.AuthModelViewSet):
     def perform_destroy(self, instance):
         # 先删除关联的SLA配置
         # TODO 删除服务在运行的SLA任务的处理方案
+        # 删除相关的服务绑定
+        CatalogService.objects.filter(service_id=instance.id).delete()
         ServiceSla.objects.filter(service_id=instance.id).delete()
+
         super().perform_destroy(instance)
 
     def get_queryset(self):
@@ -424,10 +422,10 @@ class ServiceViewSet(component_viewsets.AuthModelViewSet):
     @action(detail=False, methods=["get"], permission_classes=())
     def all(self, request, *args, **kwargs):
         context = self.get_serializer_context()
-        serializer_class = self.get_serializer_class()
+        serializer_class = ServiceListSerializer
         queryset = Service.objects.filter(
             display_type__in=[OPEN, GENERAL, ORGANIZATION], is_valid=True
-        )
+        ).values("id", "key", "name")
         conditions = Service.permission_filter(request.user.username)
         queryset = queryset.filter(reduce(operator.or_, conditions))
         serializer = serializer_class(queryset, many=True, context=context)
@@ -519,6 +517,7 @@ class ServiceViewSet(component_viewsets.AuthModelViewSet):
 
         field_ids = []
         state = self.get_state_by_service(to_service)
+        old_fields = state.fields
         for field in table.tag_data()["fields"]:
             field.pop("id")
             field.pop("project_key", None)
@@ -532,11 +531,22 @@ class ServiceViewSet(component_viewsets.AuthModelViewSet):
         state.fields = field_ids
         state.save()
 
+        Field.objects.filter(id__in=old_fields).delete()
+
     def copy_fields_from_service(self, from_service, to_service):
         field_ids = []
         state = self.get_state_by_service(to_service)
         from_service_fields = from_service.workflow.get_first_state_fields()
+
+        old_fields = state.fields
+
         for field in from_service_fields:
+            workflow_id = to_service.workflow.workflow_id
+            if field["key"] == "bk_biz_id":
+                workflow = Workflow.objects.get(id=workflow_id)
+                workflow.is_biz_needed = True
+                workflow.save()
+
             field.pop("id")
             field.pop("project_key", None)
             field["workflow_id"] = to_service.workflow.workflow_id
@@ -546,6 +556,8 @@ class ServiceViewSet(component_viewsets.AuthModelViewSet):
 
         state.fields = field_ids
         state.save()
+
+        Field.objects.filter(id__in=old_fields).delete()
 
     @action(detail=True, methods=["post"])
     def sla_validate(self, request, *args, **kwargs):
@@ -561,6 +573,7 @@ class ServiceViewSet(component_viewsets.AuthModelViewSet):
             "display_role": 8,
             "display_type": "display_type",
             "workflow_config": {
+                "is_auto_approve": true,
                 "is_revocable": true,
                 "revoke_config": {
                     "type": 1,
@@ -584,7 +597,8 @@ class ServiceViewSet(component_viewsets.AuthModelViewSet):
                 "notify_rule": "ONCE",
                 "is_supervise_needed": true,
                 "supervise_type": "EMPTY",
-                "supervisor": ""
+                "supervisor": "",
+                "owners":"",
             }
         }
         """
@@ -599,22 +613,9 @@ class ServiceViewSet(component_viewsets.AuthModelViewSet):
         with transaction.atomic():
             workflow = self.update_workflow_configs(workflow_id, workflow_config)
             configs["workflow_id"] = workflow.create_version().id
-            self.sync_first_state_process(workflow, configs)
             service.update_service_configs(configs)
         context = self.get_serializer_context()
         return Response(self.serializer_class(instance=service, context=context).data)
-
-    def sync_first_state_process(self, workflow, service_config):
-        display_type = service_config["display_type"]
-        display_role = service_config.get("display_role", "")
-        if display_type == API or display_type == INVISIBLE:
-            workflow.update_first_state_process_config(
-                processors_type=OPEN, processors=""
-            )
-            return
-        workflow.update_first_state_process_config(
-            processors_type=OPEN, processors=display_role
-        )
 
     def update_workflow_configs(self, workflow_id, workflow_config):
         workflow = Workflow.objects.filter(id=workflow_id).first()
@@ -628,6 +629,49 @@ class ServiceViewSet(component_viewsets.AuthModelViewSet):
         state_id = service.workflow.first_state["id"]
         state = State.objects.get(id=state_id)
         return state
+
+    @action(detail=True, methods=["get"], permission_classes=())
+    def export(self, request, *args, **kwargs):
+        instance = self.get_object()
+        # 统一导入导出格式为列表数据
+        data = instance.tag_data()
+        response = FileResponse(json.dumps(data, cls=JsonEncoder, indent=2))
+        response["Content-Type"] = "application/octet-stream"
+        # 中文文件名乱码问题
+        response[
+            "Content-Disposition"
+        ] = "attachment; filename*=UTF-8''bk_itsm_{}_{}.json".format(
+            escape_uri_path(instance.name),
+            create_version_number(),
+        )
+
+        return response
+
+    @action(detail=True, methods=["post"], permission_classes=())
+    def clone(self, request, *args, **kwargs):
+        instance = self.get_object()
+        tag_data = instance.tag_data()
+        service = Service.objects.clone(tag_data, request.user.username)
+        service.bind_catalog(instance.catalog_id, instance.project_key)
+        return Response(
+            self.serializer_class(service, context=self.get_serializer_context()).data
+        )
+
+    @action(detail=False, methods=["post"])
+    def imports(self, request, *args, **kwargs):
+        data = json.loads(request.FILES.get("file").read())
+        project_key = request.data.get("project_key", data.get("project_key"))
+        data["project_key"] = project_key
+        if isinstance(data, list):
+            raise ParamError(_("2.5.9 版本之前的流程无法导入，请转换后在看，详情请看github"))
+        ServiceImportSerializer(data=data).is_valid(raise_exception=True)
+        catalog_id = request.data.get("catalog_id")
+        service = Service.objects.clone(
+            data, request.user.username, catalog_id=catalog_id
+        )
+        return Response(
+            self.serializer_class(service, context=self.get_serializer_context()).data
+        )
 
 
 class SysDictViewSet(DynamicListModelMixin, component_viewsets.ModelViewSet):

@@ -21,8 +21,19 @@
   -->
 
 <template>
-    <div class="bk-get-param">
-        <bk-table :ext-cls="'bk-editor-table'"
+  <div class="bk-get-param">
+    <bk-table
+      v-if="isStatic"
+      :data="sopsTableInfo"
+      :ext-cls="'bk-editor-table'">
+      <bk-table-column :label="$t(`m.treeinfo['字段名']`)" prop="name"></bk-table-column>
+      <bk-table-column :label="$t(`m.treeinfo['参数值']`)" width="400">
+        <template slot-scope="props">
+          <span>{{props.row.value || '--'}}</span>
+        </template>
+      </bk-table-column>
+    </bk-table>
+    <!-- <bk-table :ext-cls="'bk-editor-table'"
             :data="paramTableShow"
             :size="'small'">
             <bk-table-column :label="$t(`m.treeinfo['字段名']`)" prop="name"></bk-table-column>
@@ -75,207 +86,313 @@
                     </template>
                 </template>
             </bk-table-column>
-        </bk-table>
-        <div class="bk-add-slider" v-if="sliderInfo.show && isStatic === false">
-            <bk-sideslider
-                :is-show.sync="sliderInfo.show"
-                :title="sliderInfo.title"
-                :width="sliderInfo.width">
-                <div class="p20" slot="content">
-                    <add-field
-                        :change-info="changeInfo"
-                        :sosp-info="showTabData"
-                        :workflow="flowInfo.id"
-                        :state="configur.id"
-                        @closeShade="closeShade"
-                        @getRelatedFields="getRelatedFields">
-                    </add-field>
-                </div>
-            </bk-sideslider>
-        </div>
+        </bk-table> -->
+    <div class="sops-form">
+      <render-form
+        ref="renderForm"
+        :form-option="formOptions"
+        :constants="constants"
+        :context="context"
+        :key="renderKey"
+        v-model="formData"
+        :hooked="hookedVarList"
+        @configLoadingChange="configLoading = $event">
+        <template slot="tagHook" slot-scope="{ scheme }">
+          <div class="hook-area">
+            <bk-checkbox
+              :disabled="disabled || disabledRenderForm"
+              :value="!!hookedVarList[scheme.tag_code]"
+              @change="onHookChange($event, scheme)">
+              {{ $t(`m.tickets["引用变量"]`) }}
+            </bk-checkbox>
+            <div v-if="hookedVarList[scheme.tag_code]" class="var-select">
+              <bk-select
+                :disabled="disabled || disabledRenderForm"
+                :clearable="false"
+                searchable
+                :value="formData[scheme.tag_code].replace(/^\$\{/, '').replace(/\}$/, '')"
+                @selected="onSelectVar($event, scheme)">
+                <bk-option
+                  v-for="varItem in stateList"
+                  :key="varItem.key"
+                  :id="varItem.key"
+                  :name="varItem.name">
+                  {{ varItem.name }}
+                </bk-option>
+              </bk-select>
+            </div>
+          </div>
+        </template>
+      </render-form>
     </div>
+    <div class="bk-add-slider" v-if="sliderInfo.show && isStatic === false">
+      <bk-sideslider
+        :is-show.sync="sliderInfo.show"
+        :title="sliderInfo.title"
+        :width="sliderInfo.width">
+        <div class="p20" slot="content">
+          <add-field
+            :change-info="changeInfo"
+            :sosp-info="showTabData"
+            :workflow="flowInfo.id"
+            :state="configur.id"
+            @closeShade="closeShade"
+            @getRelatedFields="getRelatedFields">
+          </add-field>
+        </div>
+      </bk-sideslider>
+    </div>
+  </div>
 </template>
 
 <script>
-    import addField from '../addField/index.vue'
+  import addField from '../addField/index.vue';
+  import { deepClone } from '@/utils/util.js';
 
-    export default {
-        name: 'sopsGetParam',
-        components: {
-            addField
+  export default {
+    name: 'sopsGetParam',
+    components: {
+      addField,
+    },
+    props: {
+      quoteVars: Array,
+      constantDefaultValue: Object,
+      context: {
+        type: Object,
+        default() {
+          return {};
         },
-        props: {
-            paramTableData: {
-                type: Array,
-                default () {
-                    return []
-                }
-            },
-            isStaticData: {
-                type: Array,
-                default () {
-                    return []
-                }
-            },
-            configur: {
-                type: Object,
-                default () {
-                    return {}
-                }
-            }, // 流程信息
-            flowInfo: {
-                type: Object,
-                default () {
-                    return {}
-                }
-            },
-            // 节点信息
-            stateList: {
-                type: Array,
-                default () {
-                    return []
-                }
-            },
-            // 是否仅展示 数据
-            isStatic: {
-                type: Boolean,
-                default () {
-                    return false
-                }
-            }
+      },
+      constants: {
+        type: Array,
+        default() {
+          return [];
         },
-        data () {
-            return {
-                checkInfo: {
-                    name: '',
-                    road: ''
-                },
-                paramTableShow: [],
-                biz: [
-                    {
-                        name: this.$t(`m.treeinfo["业务"]`),
-                        custom_type: '',
-                        source_type: 'custom',
-                        value: '--',
-                        key: 1
-                    }
-                ],
-                changeInfo: {
-                    workflow: '',
-                    id: '',
-                    key: '',
-                    name: '',
-                    type: 'STRING',
-                    desc: '',
-                    layout: 'COL_12',
-                    validate_type: 'REQUIRE',
-                    choice: [],
-                    is_builtin: false,
-                    source_type: 'CUSTOM',
-                    source_uri: '',
-                    regex: 'EMPTY',
-                    custom_regex: '',
-                    is_tips: false,
-                    tips: ''
-                },
-                sourceTypeList: [
-                    {
-                        id: 1,
-                        key: 'custom',
-                        name: this.$t(`m.treeinfo["自定义"]`)
-                    },
-                    {
-                        id: 2,
-                        key: 'component_inputs',
-                        name: this.$t(`m.treeinfo["引用变量"]`)
-                    }
-                ],
-                sliderInfo: {
-                    title: this.$t(`m.treeinfo["添加变量"]`),
-                    show: false,
-                    width: 700
-                },
-                showTabData: {}
-            }
+      },
+      isStaticData: {
+        type: Array,
+        default() {
+          return [];
         },
-        computed: {},
-        watch: {
-            paramTableData: {
-                handler (newValue) {
-                    this.paramTableShow = []
-                    this.paramTableShow = this.paramTableShow.concat(this.biz, newValue)
-                    this.paramTableShow.forEach(item => {
-                        item.value = ''
-                        if (item.source_type === 'component_outputs') {
-                            item.source_type = 'component_inputs'
-                        }
-                    })
-                    if (this.configur.extras
-                        && this.configur.extras.sops_info
-                        && this.configur.extras.sops_info.template_id) {
-                        this.paramTableShow.forEach(
-                            (item, index) => {
-                                if (!index && this.configur.extras.sops_info.bk_biz_id) {
-                                    item.source_type = this.configur.extras.sops_info.bk_biz_id['value_type']
-
-                                    item.value = this.configur.extras.sops_info.bk_biz_id['value']
-                                } else {
-                                    const current = this.configur.extras.sops_info.constants.filter(
-                                        ite => {
-                                            return ite.key === item.key
-                                        }
-                                    )[0]
-                                    if (current) {
-                                        item.source_type = current['value_type']
-                                        item.value = current['value']
-                                    }
-                                }
-                                if (item.source_type === 'variable') {
-                                    item.source_type = 'component_inputs'
-                                }
-                            }
-                        )
-                    }
-                },
-                deep: false
-            }
+      },
+      configur: {
+        type: Object,
+        default() {
+          return {};
         },
-        mounted () {
-            this.paramTableShow = this.paramTableShow.concat(this.biz, this.paramTableData)
-            if (this.isStatic === true) {
-                this.paramTableShow = []
-                this.isStaticData.forEach((item) => {
-                    const ite = {
-                        name: item.name,
-                        value: item.value
-                    }
-                    this.paramTableShow.push(ite)
-                })
-            }
+      }, // 流程信息
+      flowInfo: {
+        type: Object,
+        default() {
+          return {};
         },
-        methods: {
-            getRelatedFields () {
-                this.$parent.getRelatedFields()
-            },
-            addNewItem (data) {
-                this.showTabData = data
-                this.sliderInfo.show = true
-                this.$refs['selectSops' + data.key].close()
-            },
-            closeShade () {
-                this.sliderInfo.show = false
-            },
-            showNew (sopsinfo, res) {
-                this.paramTableShow.forEach((item) => {
-                    if (item.key === sopsinfo.key) {
-                        item.value = res.data.key
-                    }
-                })
-            }
+      },
+      // 节点信息
+      stateList: {
+        type: Array,
+        default() {
+          return [];
+        },
+      },
+      // 是否仅展示 数据
+      isStatic: {
+        type: Boolean,
+        default() {
+          return false;
+        },
+      },
+      hookedVarList: Object,
+      isHook: {
+        type: Boolean,
+        default() {
+          return true;
+        },
+      },
+      isEdit: {
+        type: Boolean,
+        default() {
+          return true;
+        },
+      },
+      initFormDate: Object,
+    },
+    data() {
+      return {
+        disabled: false,
+        ticketDisable: false,
+        disabledRenderForm: false,
+        // quoteVarsLoading: false,
+        configLoading: false,
+        quoteErrors: [], // 变量引用校验不同通过列表
+        renderKey: '',
+        formData: {},
+        formOptions: {
+          showRequired: true,
+          showGroup: true,
+          showLabel: true,
+          showHook: this.isHook,
+          showDesc: true,
+          formEdit: !this.disabled && !this.disabledRenderForm && this.isEdit,
+        },
+        fieldList: [],
+        checkInfo: {
+          name: '',
+          road: '',
+        },
+        biz: [
+          {
+            name: this.$t('m.treeinfo["业务"]'),
+            custom_type: '',
+            source_type: 'custom',
+            value: '--',
+            key: 1,
+          },
+        ],
+        changeInfo: {
+          workflow: '',
+          id: '',
+          key: '',
+          name: '',
+          type: 'STRING',
+          desc: '',
+          layout: 'COL_12',
+          validate_type: 'REQUIRE',
+          choice: [],
+          is_builtin: false,
+          source_type: 'CUSTOM',
+          source_uri: '',
+          regex: 'EMPTY',
+          custom_regex: '',
+          is_tips: false,
+          tips: '',
+        },
+        sourceTypeList: [
+          {
+            id: 1,
+            key: 'custom',
+            name: this.$t('m.treeinfo["自定义"]'),
+          },
+          {
+            id: 2,
+            key: 'component_inputs',
+            name: this.$t('m.treeinfo["引用变量"]'),
+          },
+        ],
+        sliderInfo: {
+          title: this.$t('m.treeinfo["添加变量"]'),
+          show: false,
+          width: 700,
+        },
+        showTabData: {},
+        sopsTableInfo: [],
+      };
+    },
+    computed: {},
+    watch: {
+      constants: {
+        handler() {
+          this.renderKey = new Date().getTime();
+        },
+        deep: true,
+      },
+      isEdit() {
+        this.renderKey = new Date().getTime();
+      },
+    },
+    mounted() {
+      if (this.isStatic) {
+        this.sopsTableInfo = [];
+        this.isStaticData.forEach((item) => {
+          const ite = {
+            name: item.name,
+            value: item.value,
+          };
+          this.sopsTableInfo.push(ite);
+        });
+      }
+    },
+    methods: {
+      onHookChange(val, scheme) {
+        this.$emit('onChangeHook', scheme.tag_code, val);
+        const constantItem = this.constants.find(item => item.key === scheme.tag_code);
+        constantItem.is_quoted = val;
+        if (val) {
+          this.formData[scheme.tag_code] = '';
+        } else {
+          this.formData[scheme.tag_code] = constantItem ? deepClone(this.constantDefaultValue[scheme.tag_code]) : this.initFormDate[scheme.tag_code].value;
+          const index = this.quoteErrors.findIndex(item => item === scheme.tag_code);
+          if (index > -1) {
+            this.quoteErrors.splice(index, 1);
+          }
         }
-    }
+      },
+      changeTicketformDisable(val) {
+        this.$set(this.$refs.renderForm.formOption, 'formEdit', val);
+      },
+      onSelectVar(val, scheme) {
+        this.formData[scheme.tag_code] = `\${${val}}`;
+      },
+      getRenderFormValidate() {
+        return this.$refs.renderForm.validate();
+      },
+      getRelatedFields() {
+        this.$parent.getRelatedFields();
+      },
+      addNewItem(data) {
+        this.showTabData = data;
+        this.sliderInfo.show = true;
+        this.$refs[`selectSops${data.key}`].close();
+      },
+      closeShade() {
+        this.sliderInfo.show = false;
+      },
+      showNew(sopsinfo, res) {
+        this.paramTableShow.forEach((item) => {
+          if (item.key === sopsinfo.key) {
+            item.value = res.data.key;
+          }
+        });
+      },
+    },
+  };
 </script>
 
 <style lang="scss" scoped>
-
+.hook-area {
+    display: flex;
+    height: 32px;
+    flex-wrap: nowrap;
+    align-items: center;
+    .var-select {
+        position: relative;
+        margin-left: 14px;
+        width: 200px;
+        .quote-error {
+            border-color: #ff5757;
+        }
+    }
+    .quote-error-text {
+        position: absolute;
+        bottom: -20px;
+        left: 0;
+        color: #ff5757;
+    }
+    .update-tips {
+        position: absolute;
+        right: -20px;
+        top: 10px;
+        font-size: 14px;
+        color: #ff9c01;
+        cursor: pointer;
+    }
+}
+/deep/ .el-input__inner {
+    width: 60%;
+}
+/deep/ .rf-tag-hook {
+    top: 40px;
+}
+/deep/ .rf-tag-form {
+    width: 76%;
+}
 </style>

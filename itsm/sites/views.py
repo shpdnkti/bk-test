@@ -23,11 +23,10 @@ WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN 
 SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 """
 
-import os
 import datetime
 
 from django.conf import settings
-from django.http import JsonResponse, HttpResponseRedirect
+from django.http import JsonResponse
 from django.shortcuts import render
 from django.utils.translation import ugettext as _
 from django.views.decorators.http import require_GET
@@ -39,30 +38,17 @@ from config.default import FRONTEND_URL
 from itsm.role.models import BKUserRole, UserRole
 
 
-class HttpResponseIndexRedirect(HttpResponseRedirect):
-    def __init__(self, redirect_to, *args, **kwargs):
-        super(HttpResponseIndexRedirect, self).__init__(redirect_to, *args, **kwargs)
-        self['Location'] = os.path.join(
-            settings.WEIXIN_APP_EXTERNAL_HOST.replace("https", "http"), redirect_to.lstrip("/")
-        )
-
-
 def index(request):
     """首页"""
     from adapter.core import TITLE, DOC_URL, LOGIN_URL
 
-    # 如果发现不是woa过来的域名
-    if settings.WEIXIN_APP_EXTERNAL_HOST and settings.WEIXIN_APP_EXTERNAL_HOST.find(
-        request.get_host()) == -1:
-        # 如果 host的值和HTTP_REFERER一致，则跳转
-        # 如果是从开发者中心中出来的，此时有HTTP_REFERER
-        if "HTTP_REFERER" not in request.META or request.get_host() in request.META.get("HTTP_REFERER", ""):
-            return HttpResponseIndexRedirect(request.path)
-
     # 默认为当前pass host
     BK_USER_MANAGE_HOST = settings.BK_USER_MANAGE_HOST
     # 如果来源域名非微信外网域名，则使用的BK_USER_MANAGE_HOST地址
-    if settings.WEIXIN_APP_EXTERNAL_HOST and settings.WEIXIN_APP_EXTERNAL_HOST.find(request.get_host()) == -1:
+    if (
+        settings.WEIXIN_APP_EXTERNAL_HOST
+        and settings.WEIXIN_APP_EXTERNAL_HOST.find(request.get_host()) == -1
+    ):
         BK_USER_MANAGE_HOST = FRONTEND_URL
 
     logger.info("HTTP_REFERER={}".format(request.META.get("HTTP_REFERER", "")))
@@ -71,7 +57,9 @@ def index(request):
     # 更新用户在各个系统的角色缓存
     BKUserRole.get_or_update_user_roles(request.user.username)
     try:
-        DEFAULT_PROJECT = UserProjectAccessRecord.objects.get(username=request.user.username).project_key
+        DEFAULT_PROJECT = UserProjectAccessRecord.objects.get(
+            username=request.user.username
+        ).project_key
     except Exception:
         DEFAULT_PROJECT = ""
 
@@ -86,8 +74,10 @@ def index(request):
             "all_access": UserRole.get_access_by_user(request.user.username),
             "BK_CC_HOST": settings.BK_CC_HOST,
             "BK_JOB_HOST": settings.BK_JOB_HOST,
-            "IS_ITSM_ADMIN": 1 if UserRole.is_itsm_superuser(request.user.username) else 0,
-            "CUSTOM_TITLE": TITLE,
+            "IS_ITSM_ADMIN": 1
+            if UserRole.is_itsm_superuser(request.user.username)
+            else 0,
+            "CUSTOM_TITLE": TITLE(),
             "USE_LOG": "true",
             "LOGIN_URL": LOGIN_URL,
             "LOG_NAME": settings.LOG_NAME or _("流程服务"),
@@ -97,6 +87,7 @@ def index(request):
             "DEFAULT_PROJECT": DEFAULT_PROJECT,
             "DOC_URL": DOC_URL,
             "SOPS_URL": settings.SOPS_SITE_URL,
+            "RUN_VER": settings.RUN_VER,
         },
     )
 
@@ -113,7 +104,7 @@ def get_footer(request):
     return JsonResponse(
         {
             "result": True,
-            "data": Template(FOOTER).render(year=datetime.datetime.now().year),
+            "data": Template(FOOTER()).render(year=datetime.datetime.now().year),
             "code": "OK",
             "message": "success",
         }

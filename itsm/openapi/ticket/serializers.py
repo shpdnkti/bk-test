@@ -22,12 +22,30 @@ NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES
 WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE
 SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 """
+import random
+import string
 
 from django.utils.translation import ugettext as _
 from rest_framework import serializers
 
-from itsm.component.constants import ALL_ACTION_CHOICES, API, LEN_LONG
+from itsm.component.constants import (
+    ALL_ACTION_CHOICES,
+    API,
+    LEN_LONG,
+    APPROVAL_CHOICES,
+    LEN_NORMAL,
+    TASK_STATE,
+    NORMAL_STATE,
+    APPROVAL_STATE,
+    SIGN_STATE,
+)
 from itsm.component.exceptions import ParamError
+from itsm.ticket.models import Ticket
+from itsm.ticket.serializers import (
+    TicketComment,
+)
+from itsm.component.utils.basic import get_random_key
+from itsm.ticket.models import Status
 from itsm.ticket.serializers import TicketSerializer, TicketStateOperateSerializer
 from itsm.ticket.validators import ticket_fields_validate
 
@@ -49,23 +67,23 @@ class TicketStatusSerializer(serializers.Serializer):
 
         for field in fields:
             for key in [
-                'creator',
-                'create_at',
-                'end_at',
-                'update_at',
-                'updated_by',
-                'default',
-                'show_conditions',
-                'show_type',
-                'is_builtin',
-                'layout',
-                'is_deleted',
-                'is_valid',
-                'is_tips',
-                'display',
-                'kv_relation',
-                'tips',
-                'related_fields',
+                "creator",
+                "create_at",
+                "end_at",
+                "update_at",
+                "updated_by",
+                "default",
+                "show_conditions",
+                "show_type",
+                "is_builtin",
+                "layout",
+                "is_deleted",
+                "is_valid",
+                "is_tips",
+                "display",
+                "kv_relation",
+                "tips",
+                "related_fields",
             ]:
                 field.pop(key, None)
 
@@ -73,12 +91,12 @@ class TicketStatusSerializer(serializers.Serializer):
 
     def to_representation(self, instance):
         data = super(TicketStatusSerializer, self).to_representation(instance)
-        current_steps = data['current_steps']
+        current_steps = data["current_steps"]
         flow = instance.flow
         data["ticket_url"] = instance.pc_ticket_url
 
         for step in current_steps:
-            state_id = step['state_id']
+            state_id = step["state_id"]
             status = instance.status(state_id)
             fields = flow.get_state_fields(state_id)
             fields = self.clean_fields(fields)
@@ -104,23 +122,23 @@ class TicketResultSerializer(serializers.Serializer):
 
         for field in fields:
             for key in [
-                'creator',
-                'create_at',
-                'end_at',
-                'update_at',
-                'updated_by',
-                'default',
-                'show_conditions',
-                'show_type',
-                'is_builtin',
-                'layout',
-                'is_deleted',
-                'is_valid',
-                'is_tips',
-                'display',
-                'kv_relation',
-                'tips',
-                'related_fields',
+                "creator",
+                "create_at",
+                "end_at",
+                "update_at",
+                "updated_by",
+                "default",
+                "show_conditions",
+                "show_type",
+                "is_builtin",
+                "layout",
+                "is_deleted",
+                "is_valid",
+                "is_tips",
+                "display",
+                "kv_relation",
+                "tips",
+                "related_fields",
             ]:
                 field.pop(key, None)
 
@@ -130,7 +148,7 @@ class TicketResultSerializer(serializers.Serializer):
         data = super(TicketResultSerializer, self).to_representation(instance)
         data["ticket_url"] = instance.pc_ticket_url
         data["approve_result"] = instance.get_ticket_result()
-        data['updated_by'] = data["updated_by"].strip(",")
+        data["updated_by"] = data["updated_by"].strip(",")
         return data
 
 
@@ -156,13 +174,13 @@ class TicketRetrieveSerializer(serializers.Serializer):
     create_at = serializers.DateTimeField(read_only=True)
     is_biz_need = serializers.BooleanField(read_only=True)
     bk_biz_id = serializers.IntegerField(read_only=True)
-    fields = serializers.JSONField(read_only=True, source='ticket_fields')
+    fields = serializers.JSONField(read_only=True, source="ticket_fields")
     iframe_ticket_url = serializers.CharField(read_only=True)
 
     def to_representation(self, instance):
         data = super(TicketRetrieveSerializer, self).to_representation(instance)
         data["ticket_url"] = instance.pc_ticket_url
-        data['updated_by'] = data["updated_by"].strip(",")
+        data["updated_by"] = data["updated_by"].strip(",")
         return data
 
 
@@ -189,7 +207,24 @@ class TicketLogsSerializer(serializers.Serializer):
     title = serializers.CharField(read_only=True)
     create_at = serializers.DateTimeField(read_only=True)
     creator = serializers.CharField(read_only=True)
-    logs = serializers.JSONField(read_only=True, source='ticket_logs')
+    logs = serializers.JSONField(read_only=True, source="ticket_logs")
+
+    def to_representation(self, instance):
+        data = super(TicketLogsSerializer, self).to_representation(instance)
+
+        return data
+
+
+class TicketComplexLogsSerializer(TicketLogsSerializer):
+    logs = serializers.JSONField(read_only=True, source="ticket_complex_logs")
+
+
+class TicketApproveSerializer(TicketLogsSerializer):
+    sn = serializers.CharField(read_only=True)
+    state_id = serializers.IntegerField(read_only=True)
+    approver = serializers.CharField(read_only=True)
+    action = serializers.CharField(read_only=True)
+    remarked = serializers.CharField(read_only=True)
 
 
 class SimpleLogsSerializer(serializers.Serializer):
@@ -204,7 +239,51 @@ class SimpleLogsSerializer(serializers.Serializer):
 
     def to_representation(self, instance):
         data = super(SimpleLogsSerializer, self).to_representation(instance)
-        data['message'] = data['message'].format(
+        data["message"] = data["message"].format(
+            operator=instance.operator,
+            name=instance.from_state_name,
+            detail_message=instance.detail_message,
+            action=instance.action,
+        )
+        return data
+
+
+class ComplexLogsSerializer(serializers.Serializer):
+    operator = serializers.CharField(read_only=True)
+    operate_at = serializers.DateTimeField(read_only=True)
+    message = serializers.CharField(read_only=True)
+    source = serializers.CharField(read_only=True)
+    form_data = serializers.JSONField(read_only=True)
+
+    def to_representation(self, instance):
+        data = super(ComplexLogsSerializer, self).to_representation(instance)
+        # 返回form data 数据，由于API节点的 form data 太过于庞大，故只返回输出变量
+        node_status = Status.objects.filter(
+            ticket_id=instance.ticket_id, state_id=instance.from_state_id
+        ).first()
+
+        from_state_type = getattr(node_status, "type", "")
+        data["from_state_type"] = from_state_type
+
+        if from_state_type in [NORMAL_STATE, APPROVAL_STATE, SIGN_STATE]:
+            data["form_data"] = TicketFieldSerializer(
+                instance.form_data, many=True
+            ).data
+
+        if from_state_type == TASK_STATE:
+            form_data = []
+            if isinstance(instance.form_data, list) and instance.form_data:
+                for item in instance.form_data:
+                    form_data.append(
+                        {
+                            "output_variables": item.get("value", {}).get(
+                                "output_variables", []
+                            )
+                        }
+                    )
+            data["form_data"] = form_data
+
+        data["message"] = data["message"].format(
             operator=instance.operator,
             name=instance.from_state_name,
             detail_message=instance.detail_message,
@@ -241,7 +320,7 @@ class TicketListSerializer(serializers.Serializer):
     def to_representation(self, instance):
         data = super(TicketListSerializer, self).to_representation(instance)
         data["ticket_url"] = instance.pc_ticket_url
-        data['updated_by'] = data["updated_by"].strip(",")
+        data["updated_by"] = data["updated_by"].strip(",")
         return data
 
 
@@ -266,29 +345,35 @@ class TicketProceedSerializer(serializers.Serializer):
         """
         检验字段合法性：必填校验（未考虑隐藏字段）
         """
-        ticket = self.context['ticket']
-        state_id = self.context['state_id']
+        ticket = self.context["ticket"]
+        state_id = self.context["state_id"]
 
         # 检查字段是否缺失
         state_fields = ticket.flow.get_state_fields(state_id)
-        required_fields = filter(lambda f: f['validate_type'] == 'REQUIRE', state_fields)
-        required_keys = {f['key'] for f in required_fields}
+        required_fields = filter(
+            lambda f: f["validate_type"] == "REQUIRE", state_fields
+        )
+        required_keys = {f["key"] for f in required_fields}
 
         field_keys = set()
         field_hash = {}
         for f in fields:
-            field_keys.add(f['key'])
-            field_hash[f['key']] = f['value']
+            field_keys.add(f["key"])
+            field_hash[f["key"]] = f["value"]
 
         lost_keys = required_keys - field_keys
         if lost_keys:
-            raise ParamError(_('单据处理失败，缺少参数：{}'.format(list(lost_keys))))
+            raise ParamError(_("单据处理失败，缺少参数：{}".format(list(lost_keys))))
 
-        for f in state_fields:
-            f.update(value=field_hash.get(f['key'], ''))
+        for field in state_fields:
+            if "workflow_id" in field:
+                field.pop("workflow_id")
+            field.update(value=field_hash.get(field["key"], ""))
 
         # TODO: 校验字段的value的合法性，需要进一步重构validators
-        ticket_fields_validate(state_fields, state_id, ticket, request=self.context["request"])
+        ticket_fields_validate(
+            state_fields, state_id, ticket, request=self.context["request"]
+        )
 
         return state_fields
 
@@ -299,6 +384,25 @@ class TicketCreateSerializer(TicketSerializer):
     """
 
     creator = serializers.CharField(required=True)
+
+
+class DynamicFieldSerializer(serializers.Serializer):
+    name = serializers.CharField(required=True, max_length=32)
+    type = serializers.ChoiceField(
+        choices=[("STRING", "字符串"), ("INT", "数字"), ("LINK", "链接")], required=True
+    )
+    value = serializers.CharField(required=True, max_length=255)
+    key = serializers.CharField(required=False, read_only=True)
+
+    def validate(self, attrs):
+        key = get_random_key(attrs["name"])
+        if key[0].isdigit():
+            # 开头为数字，重新生成
+            first_letter = random.choice(string.ascii_letters)
+            key = first_letter + key[1:]
+
+        attrs["key"] = key
+        return attrs
 
 
 class TicketNodeOperateSerializer(TicketStateOperateSerializer):
@@ -320,8 +424,19 @@ class TicketOperateSerializer(serializers.Serializer):
     action_message = serializers.CharField(required=False, max_length=LEN_LONG)
 
 
+class ProceedApprovalSerializer(serializers.Serializer):
+    """审批操作序列化"""
+
+    process_inst_id = serializers.CharField(required=False, max_length=LEN_NORMAL)
+    activity = serializers.IntegerField(required=True)
+    submit_action = serializers.ChoiceField(choices=APPROVAL_CHOICES)
+    submit_opinion = serializers.CharField(required=False, max_length=LEN_LONG)
+    handler = serializers.CharField(required=True)
+
+
 class TicketFilterSerializer(serializers.Serializer):
     """单据查询过滤的序列化器"""
+
     view_type = serializers.ChoiceField(
         required=True,
         choices=[
@@ -333,7 +448,47 @@ class TicketFilterSerializer(serializers.Serializer):
             ("my_approval", "my_approval"),
         ],
     )
-    create_at__gte = serializers.DateTimeField(required=False, format="%Y-%m-%d %H:%M:%S")
-    create_at__lte = serializers.DateTimeField(required=False, format="%Y-%m-%d %H:%M:%S")
+    service_id = serializers.IntegerField(required=False)
+    catalog_id = serializers.IntegerField(required=False)
+    create_at__gte = serializers.DateTimeField(
+        required=False, format="%Y-%m-%d %H:%M:%S"
+    )
+    create_at__lte = serializers.DateTimeField(
+        required=False, format="%Y-%m-%d %H:%M:%S"
+    )
     exclude_ticket_id__in = serializers.CharField(required=False)
     current_processor = serializers.CharField(required=False)
+
+
+class CommentSerializer(serializers.Serializer):
+    """工单评价序列化"""
+
+    ticket_id = serializers.IntegerField(required=False)
+    operator = serializers.CharField(max_length=16, required=True)
+    sn = serializers.CharField(required=True)
+    stars = serializers.IntegerField(required=True, max_value=6, min_value=1)
+    comments = serializers.CharField(
+        required=False, max_length=LEN_LONG, allow_null=True, allow_blank=True
+    )
+
+    def validate(self, attrs):
+        sn = attrs.get("sn", "")
+        try:
+            ticket = Ticket.objects.get(sn=sn)
+        except Ticket.DoesNotExist:
+            raise ParamError(_("sn={}对应的单据不存在!".format(sn)))
+
+        if ticket.current_status != "FINISHED":
+            raise ParamError(_("单据未结束，不允许评价!"))
+
+        try:
+            ticket_comment = TicketComment.objects.get(ticket_id=ticket.id)
+        except TicketComment.DoesNotExist:
+            raise ParamError(_("单据评价记录未存在，无法评价!"))
+
+        if ticket_comment.stars != 0:
+            raise ParamError(_("该单据已经被评论，请勿重复评论"))
+
+        attrs["ticket_id"] = ticket.id
+
+        return attrs

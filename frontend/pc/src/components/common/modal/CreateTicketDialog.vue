@@ -21,245 +21,265 @@
   -->
 
 <template>
-    <bk-dialog
-        render-directive="if"
-        ext-cls="create-ticket-dialog"
-        :width="980"
-        :value="isShow"
-        :mask-close="false"
-        :auto-close="false"
-        :close-icon="false"
-        :ok-text="$t(`m.common['下一步']`)"
-        @confirm="onConfirm"
-        @cancel="onCloseDialog">
-        <div class="select-service">
-            <div class="tab-wrapper">
-                <template>
-                    <span class="type-item active">{{ $t(`m.managePage['提单']`) }}</span>
-                </template>
-            </div>
-            <div class="search-input-wrapper">
-                <bk-input
-                    class="search-input"
-                    right-icon="bk-icon icon-search"
-                    :placeholder="$t(`m.common['请输入服务名称']`)"
-                    :clearable="true"
-                    @change="searchHandler">
-                </bk-input>
-            </div>
-            <div style="height: 100%;" v-bkloading="{ isLoading: loading }">
-                <template v-if="!loading">
-                    <bk-tab :active="activeClassify" type="unborder-card">
-                        <bk-tab-panel
-                            v-for="group in serviceList"
-                            :key="group.name"
-                            v-bind="group">
-                            <ul v-if="group.data.length > 0" class="service-content">
-                                <li
-                                    :class="['service-item', { active: selectedService && selectedService.id === service.id }]"
-                                    v-for="service in group.data"
-                                    :key="service.id"
-                                    @click="onSelectService(service)">
-                                    <div class="service-name"
-                                        v-html="service.name"
-                                        v-bk-tooltips="{
-                                            allowHtml: true,
-                                            placement: 'top',
-                                            boundary: 'window',
-                                            extCls: 'service-title-desc-tooltip',
-                                            width: 354,
-                                            delay: [500, 0],
-                                            content: `#serviceTips_${service.id}`
-                                        }">
-                                    </div>
-                                    <div :id="`serviceTips_${service.id}`" class="service-tooltip-content"><h4 v-html="service.name"></h4><pre>{{service.desc}}</pre></div>
-                                    <div class="active-tag">
-                                        <i class="bk-itsm-icon icon-itsm-icon-fill-fit"></i>
-                                    </div>
-                                    <i
-                                        :class="['bk-itsm-icon', 'collect-icon', service.favorite ? 'icon-favorite' : 'icon-rate']"
-                                        v-bk-tooltips="{
-                                            placement: 'top',
-                                            boundary: 'window',
-                                            extCls: 'favorite-desc-tooltip',
-                                            content: service.favorite ? $t(`m.common['取消收藏']`) : $t(`m.common['添加收藏']`),
-                                            delay: [300, 0]
-                                        }"
-                                        @click.stop="onCollectClick(service)">
-                                    </i>
-                                </li>
-                            </ul>
-                            <div class="service-empty" v-else>
-                                <div>
-                                    <i class="bk-icon icon-empty"></i>
-                                    <p class="text">
-                                        <template v-if="!searchModel">
-                                            <span>{{ $t(`m.common['暂无服务，']`) }}</span>
-                                            <router-link :to="{ name: 'projectServiceList', query: { project_id: $store.state.project.id } }" @click.native="onCloseDialog">{{ $t(`m.taskTemplate['立即创建']`) }}</router-link>
-                                        </template>
-                                        <span v-else>{{ $t(`m.common['无匹配服务']`) }}</span>
-                                    </p>
-                                </div>
-                            </div>
-                        </bk-tab-panel>
-                    </bk-tab>
-                </template>
-            </div>
-        </div>
-    </bk-dialog>
+  <bk-dialog
+    data-test-id="createTicket-dialog-ontext"
+    render-directive="if"
+    ext-cls="create-ticket-dialog"
+    :width="980"
+    :value="isShow"
+    :show-footer="false"
+    :mask-close="false"
+    :auto-close="false"
+    :close-icon="true"
+    @cancel="onCloseDialog">
+    <div class="select-service">
+      <div class="tab-wrapper">
+        <template>
+          <span class="type-item active">{{ $t(`m.managePage['提单']`) }}</span>
+        </template>
+      </div>
+      <div class="search-input-wrapper">
+        <bk-input
+          data-test-id="createTicket-input-search"
+          class="search-input"
+          right-icon="bk-icon icon-search"
+          :placeholder="$t(`m.common['请输入服务名称']`)"
+          :clearable="true"
+          @change="searchHandler">
+        </bk-input>
+      </div>
+      <div style="height: calc(100% - 40px);" v-bkloading="{ isLoading: loading }">
+        <template v-if="!loading">
+          <bk-tab :active="activeClassify" type="unborder-card" @tab-change="handleTabChange">
+            <bk-tab-panel
+              v-for="(group, index) in serviceList"
+              v-bind="group"
+              :key="index">
+              <template v-slot:label>
+                <i class="panel-icon bk-icon icon-cog-shape"></i>
+                <span class="panel-name">{{ group.label }}</span>
+                <span class="panel-count" v-if="searchModel">{{ listNum[group.name] }}</span>
+                <i :class="[group.name === activeName ? 'active-line' : '']"></i>
+              </template>
+              <ul v-if="group.data.length > 0" class="service-content">
+                <li
+                  v-for="service in group.data"
+                  :class="['service-item', { active: selectedService && selectedService.id === service.id }]"
+                  :key="service.id"
+                  @click="onSelectService(service)">
+                  <div
+                    v-html="service.name"
+                    v-bk-tooltips="{
+                      allowHtml: true,
+                      placement: 'top',
+                      boundary: 'window',
+                      extCls: 'service-title-desc-tooltip',
+                      width: 354,
+                      delay: [500, 0],
+                      content: `#serviceTips_${service.id}`
+                    }"
+                    class="service-name">
+                  </div>
+                  <div :id="`serviceTips_${service.id}`" class="service-tooltip-content"><h4 v-html="service.name"></h4><pre>{{service.desc}}</pre></div>
+                  <div class="active-tag">
+                    <i class="bk-itsm-icon icon-itsm-icon-fill-fit"></i>
+                  </div>
+                  <i
+                    v-bk-tooltips="{
+                      placement: 'top',
+                      boundary: 'window',
+                      extCls: 'favorite-desc-tooltip',
+                      content: service.favorite ? $t(`m.common['取消收藏']`) : $t(`m.common['添加收藏']`),
+                      delay: [300, 0]
+                    }"
+                    data-test-id="createTicket-i-favorite"
+                    :class="['bk-itsm-icon', 'collect-icon', service.favorite ? 'icon-favorite' : 'icon-rate']"
+                    @click.stop="onCollectClick(service)">
+                  </i>
+                </li>
+              </ul>
+              <div class="service-empty" v-else>
+                <div>
+                  <i class="bk-icon icon-empty"></i>
+                  <p class="text">
+                    <template v-if="!searchModel">
+                      <span>{{ $t(`m.common['暂无服务，']`) }}</span>
+                      <router-link :to="{ name: 'projectServiceList', query: { project_id: $store.state.project.id } }" @click.native="onCloseDialog">{{ $t(`m.taskTemplate['立即创建']`) }}</router-link>
+                    </template>
+                    <span v-else>{{ $t(`m.common['无匹配服务']`) }}</span>
+                  </p>
+                </div>
+              </div>
+            </bk-tab-panel>
+          </bk-tab>
+        </template>
+      </div>
+    </div>
+  </bk-dialog>
 </template>
 <script>
-    import debounce from 'throttle-debounce/debounce'
-    import { errorHandler } from '../../../utils/errorHandler'
+  import debounce from 'throttle-debounce/debounce';
+  import { errorHandler } from '../../../utils/errorHandler';
 
-    export default {
-        name: 'CreateTicketDialog',
-        props: {
-            isShow: Boolean
-        },
-        data () {
-            return {
-                allList: [],
-                latestList: [],
-                searchList: [],
-                serviceClassify: [],
-                activeClassify: '',
-                searchModel: false,
-                selectedService: null,
-                latestLoading: false,
-                allLoading: false
-            }
-        },
-        computed: {
-            loading () {
-                return this.latestLoading || this.collectedLoading || this.allLoading
-            },
-            serviceList () {
-                const data = this.searchModel ? this.searchList : this.allList
-                const list = this.serviceClassify.map(item => ({
-                    name: item.key,
-                    label: item.name,
-                    data: []
-                }))
-                data.forEach(service => {
-                    const group = list.find(item => item.name === service.key)
-                    group.data.push(service)
-                })
-
-                return list
-            }
-        },
-        watch: {
-            isShow (val) {
-                if (val) {
-                    this.getAllService()
-                    this.getServiceClassify()
-                }
-            }
-        },
-        created () {
-            this.searchHandler = debounce(500, val => {
-                this.onServiceSearch(val)
-            })
-        },
-        methods: {
-            // 获取所有服务
-            getAllService () {
-                this.allLoading = true
-                this.$store.dispatch('service/getServiceList', { no_page: true }).then(resp => {
-                    if (resp.result) {
-                        this.allList = resp.data
-                    }
-                }).catch((res) => {
-                    errorHandler(res, this)
-                }).finally(() => {
-                    this.allLoading = false
-                })
-            },
-            // 获取服务分类信息
-            getServiceClassify () {
-                this.serviceClassfyLoading = true
-                return this.$store.dispatch('getCustom').then((res) => {
-                    this.serviceClassify = res.data
-                }).catch(res => {
-                    errorHandler(res, this)
-                }).finally(() => {
-                    this.serviceClassfyLoading = false
-                })
-            },
-            onServiceSearch (val) {
-                if (val) {
-                    const list = []
-                    const reg = new RegExp(val, 'i')
-                    this.allList.forEach(item => {
-                        if (reg.test(item.name)) {
-                            const name = item.name.replace(reg, `<span style="color: #3a84ff;">${val}</span>`)
-                            list.push(Object.assign({}, item, { name }))
-                        }
-                    })
-                    this.searchModel = true
-                    this.searchList = list
-                } else {
-                    this.searchModel = false
-                    this.searchList = []
-                }
-            },
-            // 收藏/取消收藏
-            onCollectClick (service) {
-                this.$store.dispatch('service/toggleServiceFavorite', {
-                    id: service.id,
-                    favorite: !service.favorite
-                }).then((res) => {
-                    if (res.result) {
-                        this.$set(service, 'favorite', !service.favorite)
-                    }
-                    this.$bkMessage({
-                        message: service.favorite ? this.$t(`m.manageCommon['收藏成功']`) : this.$t(`m.manageCommon['取消成功']`),
-                        theme: 'success',
-                        ellipsisLine: 0
-                    })
-                }).catch((res) => {
-                    errorHandler(res, this)
-                })
-            },
-            // 点击服务
-            onSelectService (service) {
-                if (this.selectedService && this.selectedService.id === service.id) {
-                    this.selectedService = null
-                } else {
-                    this.selectedService = service
-                }
-            },
-            onConfirm () {
-                if (!this.selectedService) {
-                    this.$bkMessage({
-                        message: '请选择服务',
-                        theme: 'error'
-                    })
-                } else {
-                    const { id, project_key } = this.selectedService
-                    this.onCloseDialog()
-                    this.$router.push({
-                        name: 'CreateTicket',
-                        query: {
-                            service_id: id,
-                            project_id: project_key
-                        }
-                    })
-                }
-            },
-            onCloseDialog () {
-                this.$emit('update:isShow', false)
-                this.selectedService = null
-                this.searchList = []
-                this.searchModel = false
-            }
+  export default {
+    name: 'CreateTicketDialog',
+    props: {
+      isShow: Boolean,
+    },
+    data() {
+      return {
+        allList: [],
+        latestList: [],
+        searchList: [],
+        serviceClassify: [],
+        activeClassify: '',
+        searchModel: false,
+        selectedService: null,
+        latestLoading: false,
+        allLoading: false,
+        activeName: 'requset',
+      };
+    },
+    computed: {
+      loading() {
+        return this.latestLoading || this.collectedLoading || this.allLoading;
+      },
+      serviceList() {
+        const data = this.searchModel ? this.searchList : this.allList;
+        const list = this.serviceClassify.map(item => ({
+          name: item.key,
+          label: item.name,
+          data: [],
+        }));
+        data.forEach((service) => {
+          const group = list.find(item => item.name === service.key);
+          group.data.push(service);
+        });
+        return list;
+      },
+      listNum() {
+        const serviceCount = {};
+        this.serviceList.forEach((item) => {
+          serviceCount[item.name] = item.data.length;
+        });
+        return serviceCount;
+      },
+    },
+    watch: {
+      isShow(val) {
+        if (val) {
+          this.getAllService();
+          this.getServiceClassify();
         }
-    }
+      },
+    },
+    created() {
+      this.searchHandler = debounce(500, (val) => {
+        this.onServiceSearch(val);
+      });
+    },
+    methods: {
+      // 获取所有服务
+      getAllService() {
+        this.allLoading = true;
+        this.$store.dispatch('service/getServiceList', { no_page: true }).then((resp) => {
+          if (resp.result) {
+            this.allList = resp.data;
+          }
+        })
+          .catch((res) => {
+            errorHandler(res, this);
+          })
+          .finally(() => {
+            this.allLoading = false;
+          });
+      },
+      // 获取服务分类信息
+      getServiceClassify() {
+        this.serviceClassfyLoading = true;
+        return this.$store.dispatch('getCustom').then((res) => {
+          this.serviceClassify = res.data;
+        })
+          .catch((res) => {
+            errorHandler(res, this);
+          })
+          .finally(() => {
+            this.serviceClassfyLoading = false;
+          });
+      },
+      onServiceSearch(val) {
+        if (val) {
+          const list = [];
+          const reg = new RegExp(val, 'i');
+          this.allList.forEach((item) => {
+            if (reg.test(item.name)) {
+              const name = item.name.replace(reg, `<span style="color: #3a84ff;">${val}</span>`);
+              list.push(Object.assign({}, item, { name }));
+            }
+          });
+          this.searchModel = true;
+          this.searchList = list;
+        } else {
+          this.searchModel = false;
+          this.searchList = [];
+        }
+      },
+      // 收藏/取消收藏
+      onCollectClick(service) {
+        this.$store.dispatch('service/toggleServiceFavorite', {
+          id: service.id,
+          favorite: !service.favorite,
+        }).then((res) => {
+          if (res.result) {
+            this.$set(service, 'favorite', !service.favorite);
+          }
+          this.$bkMessage({
+            message: service.favorite ? this.$t('m.manageCommon[\'收藏成功\']') : this.$t('m.manageCommon[\'取消成功\']'),
+            theme: 'success',
+            ellipsisLine: 0,
+          });
+        })
+          .catch((res) => {
+            errorHandler(res, this);
+          });
+      },
+      // 点击服务
+      onSelectService(service) {
+        const { id, key } = service;
+        this.onCloseDialog();
+        this.$router.push({
+          name: 'CreateTicket',
+          query: {
+            service_id: id,
+            key,
+            project_id: this.$route.query.project_id,
+            from: this.$route.name,
+          },
+        });
+      },
+      handleTabChange(name) {
+        this.activeName = name;
+      },
+      onCloseDialog() {
+        this.$emit('update:isShow', false);
+        this.selectedService = null;
+        this.searchList = [];
+        this.searchModel = false;
+      },
+    },
+  };
 </script>
 <style lang="scss" scoped>
     @import '../../../scss/mixins/scroller.scss';
-
+    .active-line {
+        display: inline-block;
+        position: absolute;
+        height: 2px;
+        width: 100%;
+        background-color: #3a84ff;
+        top: 48px;
+        left: 0;
+    }
     .select-service {
         position: relative;
         height: 498px;
@@ -284,7 +304,17 @@
         right: 8px;
         .search-input {
             width: 400px;
+            background-color: #ffb848;
         }
+    }
+    .panel-count {
+        padding: 0 4px;
+        background-color: #f5f7fa;
+    }
+    /deep/ .bk-form-input {
+        border: 0px;
+        border-bottom: 1px solid  #9a9ba5;
+        border-radius: 0;
     }
     /deep/.search-result {
         li {
@@ -425,7 +455,11 @@
     }
     .create-ticket-dialog {
         &.bk-dialog-wrapper .bk-dialog-tool {
-            min-height: 14px;
+            min-height: 16px;
+            height: calc(100% - 40px);
+            .bk-dialog-close {
+                top: 20px;
+            }
         }
     }
     .service-title-desc-tooltip {

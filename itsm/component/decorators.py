@@ -23,15 +23,17 @@ WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN 
 SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 """
 
-
 import os
 import traceback
 from functools import wraps
+
+from django.conf import settings
 from django.core.exceptions import ValidationError
 from rest_framework.exceptions import ValidationError as RrfValidationError
-from django.http import JsonResponse
+from django.http import JsonResponse, HttpResponse
 from django.utils.translation import ugettext as _
 
+from itsm.component.bkoauth.jwt_client import JWTClient, jwt_invalid_view
 from itsm.component.exceptions import ServerError, ParamError
 from itsm.component.utils.response import Fail
 
@@ -98,8 +100,9 @@ def is_file_name_valid(file_name):
     校验文件名称的有效性
     :param file_name: 文件名称
     """
-    file_name_validator = ComplexRegexField(validate_type=["en", "ch", "num", "special"],
-                                            special_char="()_ .-")
+    file_name_validator = ComplexRegexField(
+        validate_type=["en", "ch", "num", "special"], special_char="()_ .-"
+    )
     file_name_validator.validate(file_name)
 
 
@@ -118,7 +121,9 @@ def validate_file_name(view_func):
         except ValidationError as error:
             return Fail(_("文件上传失败：{}").format(str(error)), "FILE_NAME_INVALID").json()
         except RrfValidationError as error:
-            return Fail(_("文件上传失败：{}").format(error.detail[0]), "FILE_NAME_INVALID").json()
+            return Fail(
+                _("文件上传失败：{}").format(error.detail[0]), "FILE_NAME_INVALID"
+            ).json()
 
         return view_func(request, *args, **kwargs)
 
@@ -141,9 +146,13 @@ def validate_files_name(view_func):
             try:
                 is_file_name_valid(upload_file.name)
             except ValidationError as error:
-                return Fail(_("文件上传失败：{}").format(str(error)), "FILE_NAME_INVALID").json()
+                return Fail(
+                    _("文件上传失败：{}").format(str(error)), "FILE_NAME_INVALID"
+                ).json()
             except RrfValidationError as error:
-                return Fail(_("文件上传失败：{}").format(error.detail[0]), "FILE_NAME_INVALID").json()
+                return Fail(
+                    _("文件上传失败：{}").format(error.detail[0]), "FILE_NAME_INVALID"
+                ).json()
 
         return view_func(request, *args, **kwargs)
 
@@ -166,15 +175,26 @@ def validate_file_upload(max_size, content_types=None, file_exts=None):
             # 文件大小校验
             if upload_file.size == 0:
                 return JsonResponse(
-                    {"code": "FILE_NOT_ALLOWED", "result": False, "message": _("禁止上传空文件.")})
+                    {
+                        "code": "FILE_NOT_ALLOWED",
+                        "result": False,
+                        "message": _("禁止上传空文件."),
+                    }
+                )
             elif upload_file.size > max_upload_size:
                 return JsonResponse(
-                    {"code": "FILE_NOT_ALLOWED", "result": False,
-                     "message": _("上传文件大小不得超过%s.") % max_size}
+                    {
+                        "code": "FILE_NOT_ALLOWED",
+                        "result": False,
+                        "message": _("上传文件大小不得超过%s.") % max_size,
+                    }
                 )
 
             # application/type， 对type进行白名单校验
-            if content_types and upload_file.content_type.split("/")[-1] not in content_types:
+            if (
+                content_types
+                and upload_file.content_type.split("/")[-1] not in content_types
+            ):
                 return JsonResponse(
                     {
                         "code": "FILE_NOT_ALLOWED",
@@ -186,8 +206,11 @@ def validate_file_upload(max_size, content_types=None, file_exts=None):
             # 对文件后缀进行白名单校验
             if file_exts and os.path.splitext(upload_file.name)[-1] not in file_exts:
                 return JsonResponse(
-                    {"code": "FILE_NOT_ALLOWED", "result": False,
-                     "message": _("上传文件类型仅支持：%s") % ", ".join(file_exts)}
+                    {
+                        "code": "FILE_NOT_ALLOWED",
+                        "result": False,
+                        "message": _("上传文件类型仅支持：%s") % ", ".join(file_exts),
+                    }
                 )
             return view_func(request, *args, **kwargs)
 
@@ -228,26 +251,83 @@ def fbv_exception_handler(view_func):
         except ServerError as e:
             # 捕捉常见的异常
             return JsonResponse(
-                {'result': False, 'code': e.code_int, 'data': None, 'message': e.message})
+                {
+                    "result": False,
+                    "code": e.code_int,
+                    "data": None,
+                    "message": e.message,
+                }
+            )
         except KeyError as e:
             return JsonResponse(
                 {
-                    'result': False,
-                    'code': ParamError.ERROR_CODE_INT,
-                    'data': None,
-                    'message': _('接口异常，缺少请求参数: {}').format(e),
+                    "result": False,
+                    "code": ParamError.ERROR_CODE_INT,
+                    "data": None,
+                    "message": _("接口异常，缺少请求参数: {}").format(e),
                 }
             )
         except Exception as e:
             logger.error(traceback.format_exc())
             return JsonResponse(
                 {
-                    'result': False,
-                    'code': ServerError.ERROR_CODE_INT,
-                    'data': None,
-                    'message': _('接口异常: {}').format(e),
+                    "result": False,
+                    "code": ServerError.ERROR_CODE_INT,
+                    "data": None,
+                    "message": _("接口异常: {}").format(e),
                 }
             )
         return response
 
     return _exception_handler
+
+
+# def custom_apigw_required(view_func):
+#     """apigw装饰器"""
+#
+#     @wraps(view_func)
+#     def _wrapped_view(self, request, *args, **kwargs):
+#         request.jwt = JWTClient(request)
+#         if not request.jwt.is_valid:
+#             return jwt_invalid_view(request)
+#         return view_func(self, request, *args, **kwargs)
+#
+#     return _wrapped_view
+
+
+def custom_apigw_required(view_func):
+    """apigw装饰器"""
+
+    @wraps(view_func)
+    def _wrapped_view(self, request, *args, **kwargs):
+
+        exempt = getattr(settings, "BK_APIGW_REQUIRE_EXEMPT", False)
+        if exempt:
+            return view_func(request, *args, **kwargs)
+
+        if not hasattr(request, "jwt"):
+            logger.warning(
+                "can not found jwt in request, "
+                "make sure ApiGatewayJWTGenericMiddleware is config in middlewares or receive jwt is valid"
+                # noqa
+            )
+            return HttpResponse(
+                status=403, content="This API can only be accessed through API gateway"
+            )
+
+        return view_func(self, request, *args, **kwargs)
+
+    return _wrapped_view
+
+
+def apigw_required(view_func):
+    """apigw装饰器"""
+
+    @wraps(view_func)
+    def _wrapped_view(request, *args, **kwargs):
+        request.jwt = JWTClient(request)
+        if not request.jwt.is_valid:
+            return jwt_invalid_view(request)
+        return view_func(request, *args, **kwargs)
+
+    return _wrapped_view

@@ -23,3 +23,5 @@ config/local_settings.py
 /scripts/check_migrate/
 #blueking/
 #blueapps/
+.codecc
+build.yml

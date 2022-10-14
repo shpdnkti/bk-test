@@ -25,6 +25,7 @@ SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 from business_rules.actions import BaseActions, rule_action
 from business_rules.fields import FIELD_NUMERIC, FIELD_TEXT
+from common.log import logger
 
 from itsm.component.constants import BACKEND
 from itsm.component.utils.lock import share_lock
@@ -36,14 +37,20 @@ class ResponseActions(BaseActions):
         self.trigger = trigger
         self.context = context
 
-    @rule_action(params={"rule": FIELD_NUMERIC, "source_type": FIELD_TEXT, "source_id": FIELD_NUMERIC})
+    @rule_action(
+        params={
+            "rule": FIELD_NUMERIC,
+            "source_type": FIELD_TEXT,
+            "source_id": FIELD_NUMERIC,
+        }
+    )
     def trigger_handle(self, rule, source_type, source_id):
         """
         针对当前触发器规则满足条件的actions进行操作
         """
         tasks = []
         for action in rule.actions:
-            action_obj = self.check_and_create(source_type, source_id, action, rule)
+            action_obj = self.can_repeat(source_type, source_id, action, rule)
             if action_obj:
                 tasks.append(
                     Action.objects.create(
@@ -63,8 +70,12 @@ class ResponseActions(BaseActions):
                 task.execute()
 
     @share_lock()
-    def check_and_create(self, source_type, source_id, action, rule):
-        created = Action.objects.filter(
+    def can_repeat(self, source_type, source_id, action, rule):
+
+        if action.can_repeat:
+            return True
+
+        action_count = Action.objects.filter(
             signal=self.trigger.signal,
             sender=self.trigger.sender,
             source_type=source_type,
@@ -72,16 +83,13 @@ class ResponseActions(BaseActions):
             schema_id=action.id,
             rule_id=rule.id,
             trigger_id=self.trigger.id,
-        ).exists()
-        if not created:
-            obj = Action.objects.create(
-                signal=self.trigger.signal,
-                sender=self.trigger.sender,
-                context=self.context,
-                source_type=source_type,
-                source_id=source_id,
-                schema_id=action.id,
-                rule_id=rule.id,
-                trigger_id=self.trigger.id,
+        ).count()
+        logger.info(
+            "[can_repeat] source_type={}, source_id={}. action={}, rule={}, action_count={}".format(
+                source_type, source_id, action.id, rule.id, action_count
             )
-            return obj
+        )
+        if action_count == 0:
+            return True
+
+        return False
